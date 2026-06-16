@@ -1830,23 +1830,6 @@ function _getDlMenu(){
   return m;
 }
 
-function _openDlMenu(btnEl, pdfCall, jpegCall){
-  const menu = _getDlMenu();
-  const runPdf = new Function(pdfCall);
-  const runJpeg = new Function(jpegCall);
-  menu.innerHTML = `<button id="_dlPdf">📄 PDF</button><button id="_dlJpeg">🖼 JPEG</button>`;
-  menu.querySelector('#_dlPdf').onclick  = ()=>{ closeAllDlMenus(); runPdf(); };
-  menu.querySelector('#_dlJpeg').onclick = ()=>{ closeAllDlMenus(); runJpeg(); };
-  // Position
-  const rect = btnEl.getBoundingClientRect();
-  const menuH = 90;
-  const spaceBelow = window.innerHeight - rect.bottom;
-  const left = Math.min(rect.left, window.innerWidth - 160);
-  const top = spaceBelow < menuH + 8 ? rect.top - menuH - 4 : rect.bottom + 4;
-  menu.style.left = Math.max(8, left) + 'px';
-  menu.style.top  = Math.max(8, top) + 'px';
-  menu.classList.add('open');
-}
 
 function closeAllDlMenus(){
   const m = document.getElementById('_globalDlMenu');
