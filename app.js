@@ -123,6 +123,46 @@ function loadDB(){
         DB.jenisSamping = ['Bekatul','Menir','Sekam'];
       }
       if(!DB.jenisBahanBaku) DB.jenisBahanBaku = ['Pecah Kulit Ciherang','Pecah Kulit IR64','Pecah Kulit Inpari','Pecah Kulit Logawa'];
+
+      // ============================================================
+      // MIGRASI KRITIS: Hapus double-entry kasbank dari bug lama.
+      // Bug: savePembelian mencatat DP dua kali:
+      //   (1) entry utama 'Pembelian Gabah' (sourceId=id, keluar=dp)
+      //   (2) entry 'DP Pembelian'          (refId=id,    keluar=dp)
+      // Fix: set keluar entry utama (sourceId) menjadi 0 jika ada entry DP/Pelunasan terkait.
+      // ============================================================
+      const pembelianIds = new Set((DB.pembelian||[]).map(p=>p.id));
+      const dpCategories = new Set(['DP Pembelian','Pelunasan Hutang Supplier']);
+      // Faktur yang punya entry refId (DP atau Pelunasan)
+      const refIdSets = new Set();
+      (DB.kasbank||[]).forEach(k=>{ if(dpCategories.has(k.kategori) && k.refId) refIdSets.add(k.refId); });
+      // Entry utama (sourceId) yang punya refId duplicate — set keluar=0
+      let fixCount = 0;
+      (DB.kasbank||[]).forEach(k=>{
+        if(k.sourceId && pembelianIds.has(k.sourceId) && refIdSets.has(k.sourceId)){
+          if(Number(k.keluar||0) > 0){
+            k.keluar = 0;
+            fixCount++;
+          }
+        }
+      });
+      if(fixCount > 0){
+        console.log(`[loadDB] Fixed ${fixCount} double-entry kasbank records.`);
+      }
+
+      // Status Belum Lunas tapi sudah bayar penuh → update status Lunas
+      (DB.pembelian||[]).forEach(p=>{
+        if(p.status !== 'Belum Lunas') return;
+        const via_kb = (DB.kasbank||[])
+          .filter(k=>(k.kategori==='Pelunasan Hutang Supplier'||k.kategori==='DP Pembelian') && k.refId===p.id)
+          .reduce((s,k)=>s+Number(k.keluar||0), 0);
+        const dp_kb = (DB.kasbank||[]).filter(k=>k.kategori==='DP Pembelian' && k.refId===p.id).reduce((s,k)=>s+Number(k.keluar||0), 0);
+        const legacy_dp = dp_kb===0 ? Number(p.dp||0) : 0;
+        const total_bayar = via_kb + legacy_dp;
+        if(total_bayar >= Number(p.total||0) && Number(p.total||0) > 0){
+          p.status = 'Lunas';
+        }
+      });
       const sampingItems = ['Bekatul','Menir','Sekam'];
       sampingItems.forEach(s=>{
         if(DB.jenisBeras && DB.jenisBeras.includes(s)){
@@ -731,7 +771,7 @@ function showRiwayatSupplier(supplierNama){
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
       <button class="btn btn-primary" style="width:auto;" onclick="printReport('${printId}','${judul}','${subtitel}')">🖨 Cetak</button>
-      ${dlMenu("downloadReportPdf('${printId}','${judul}','${subtitel}')","downloadJpegReport('${printId}','${judul}','${subtitel}')")}
+      ${dlMenuReport('${printId}','${judul}','${subtitel}')}
       <button class="btn btn-secondary" style="width:auto;" onclick="exportTableToExcel('${printId}','riwayat_supplier','Riwayat')">📊 Excel</button>
       <button class="btn btn-secondary" onclick="closeModal()">Tutup</button>
     </div>
@@ -829,7 +869,7 @@ function showRiwayatPelanggan(pelangganNama){
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
       <button class="btn btn-primary" style="width:auto;" onclick="printReport('${printId}','${judul}','${subtitel}')">🖨 Cetak</button>
-      ${dlMenu("downloadReportPdf('${printId}','${judul}','${subtitel}')","downloadJpegReport('${printId}','${judul}','${subtitel}')")}
+      ${dlMenuReport('${printId}','${judul}','${subtitel}')}
       <button class="btn btn-secondary" style="width:auto;" onclick="exportTableToExcel('${printId}','riwayat_pelanggan','Riwayat')">📊 Excel</button>
       <button class="btn btn-secondary" onclick="closeModal()">Tutup</button>
     </div>
@@ -1358,8 +1398,8 @@ function renderPembelian(target){
     <div class="card">
       <h3>Riwayat Pembelian <span class="tag">${rows.length} transaksi</span></h3>
       <button class="btn btn-primary" style="width:auto;" onclick="editPembelian(null)">+ Transaksi Baru</button>
-      <button class="btn btn-secondary" style="width:auto;" onclick="printReport('printPembelian','Riwayat Pembelian','Total transaksi: '+rows.length+' \u2014 Total nilai: '+fmtRp(totalNilai))">🖨 Cetak Laporan</button>
-      ${dlMenu(`downloadReportPdf('printPembelian','Riwayat Pembelian','Total transaksi: ${rows.length} \u2014 Total nilai: ${fmtRp(totalNilai)}')`,`downloadJpegReport('printPembelian','Riwayat Pembelian','Total transaksi: ${rows.length} \u2014 Total nilai: ${fmtRp(totalNilai)}')`)}
+      <button class="btn btn-secondary" style="width:auto;" onclick="printReport('printPembelian','Riwayat Pembelian','Total '+rows.length+' transaksi')">🖨 Cetak Laporan</button>
+      ${dlMenuReport('printPembelian','Riwayat Pembelian','Total '+rows.length+' transaksi — Nilai: '+fmtRp(totalNilai))}
       <button class="btn btn-secondary" style="width:auto;" onclick="exportTableToExcel('printPembelian','riwayat_pembelian','Pembelian')">📊 Unduh Excel</button>
       <div class="m-card-wrap">
         <div class="table-wrap" style="margin-top:14px;" id="printPembelian">
@@ -1606,48 +1646,57 @@ function savePembelian(id, isNew){
     Object.assign(row, {tanggal, supplier, kategori, jenisGabah, qty, harga, angkut, dp, total, status});
   }
 
-  // Sync to kas & bank:
-  // 1. Main purchase entry (full payment if Lunas, else just DP)
-  const bayar = status==='Lunas' ? total : dp;
+  // Sync ke Kas & Bank:
+  // Entry UTAMA (sourceId) hanya sebagai referensi/header transaksi — keluar=0
+  // DP dan pelunasan dicatat TERPISAH via refId entries
   const labelBarang = kategori==='Beras' ? (jenisGabah==='Premium'?'Beras Premium':jenisGabah==='Medium'?'Beras Medium':jenisGabah) : kategori==='Produk Samping' ? jenisGabah : `gabah ${esc(jenisGabah)}`;
   const kasKategoriPembelian = kategori==='Beras' ? 'Pembelian Beras/Barang Jadi' : kategori==='Produk Samping' ? 'Pembelian Beras/Barang Jadi' : 'Pembelian Gabah';
+
+  // Entry utama: selalu keluar=0 (hanya penanda; pembayaran dicatat via DP/Pelunasan)
   syncKasBankEntry('pembelian', row.id, {
     tanggal, keterangan:`Pembelian ${labelBarang} dari ${esc(supplier)} (${row.noFaktur})`,
-    masuk:0, keluar:bayar, kategori: kasKategoriPembelian
+    masuk:0, keluar:0, kategori: kasKategoriPembelian
   });
 
-  // 2. If Belum Lunas with DP > 0, also create a separate 'DP Pembelian' entry linked by refId
-  if(status !== 'Lunas' && dp > 0){
-    DB.kasbank = DB.kasbank.filter(k=>!(k.kategori==='DP Pembelian' && k.refId===row.id));
+  // Bersihkan DP Pembelian lama untuk faktur ini (hindari duplikat saat edit)
+  DB.kasbank = DB.kasbank.filter(k=>!(k.kategori==='DP Pembelian' && k.refId===row.id));
+  DB.kasbank = DB.kasbank.filter(k=>!(k.kategori==='Uang Muka Dipakai' && k.refId===row.id));
+
+  if(status === 'Lunas'){
+    // Lunas langsung (tanpa via pelunasan manual) — catat sebagai DP Pembelian = total
+    if(dp >= total || dp === 0){
+      // Lunas tunai: catat pembayaran penuh
+      DB.kasbank.push({
+        id: uid(), sumber:'pembelian', tanggal,
+        keterangan:`Pembayaran lunas ${labelBarang} dari ${esc(supplier)} (${row.noFaktur})`,
+        masuk:0, keluar:total, kategori:'DP Pembelian', refId:row.id
+      });
+    }
+    // Jika ada uang muka tersedia
+    const sisaUangMuka = (getUangMukaPerSupplier())[supplier] || 0;
+    if(sisaUangMuka > 0 && total > 0){
+      const dipakaiDariUM = Math.min(total, sisaUangMuka);
+      DB.kasbank.push({
+        id: uid(), sumber:'pembelian', tanggal,
+        keterangan:`Uang muka ${esc(supplier)} dipakai untuk pelunasan (${row.noFaktur})`,
+        masuk:dipakaiDariUM, keluar:0,
+        kategori:'Uang Muka Dipakai', refSupplier:supplier, refId:row.id
+      });
+    }
+  } else if(dp > 0){
+    // Belum Lunas dengan DP
     DB.kasbank.push({
       id: uid(), sumber:'pembelian', tanggal,
       keterangan:`DP pembelian ${labelBarang} dari ${esc(supplier)} (${row.noFaktur})`,
       masuk:0, keluar:dp, kategori:'DP Pembelian', refId:row.id
     });
-
-    // Cek apakah DP ini diambil dari uang muka yang tersedia untuk supplier ini
+    // Cek uang muka
     const sisaUangMuka = (getUangMukaPerSupplier())[supplier] || 0;
-    if(sisaUangMuka > 0 && dp > 0){
-      // Pakai uang muka sebesar min(dp, sisaUangMuka) — otomatis dikurangi
+    if(sisaUangMuka > 0){
       const dipakaiDariUM = Math.min(dp, sisaUangMuka);
       DB.kasbank.push({
         id: uid(), sumber:'pembelian', tanggal,
         keterangan:`Uang muka ${esc(supplier)} dipakai sebagai DP (${row.noFaktur})`,
-        masuk:dipakaiDariUM, keluar:0,
-        kategori:'Uang Muka Dipakai', refSupplier:supplier, refId:row.id
-      });
-    }
-  } else if(status === 'Lunas'){
-    DB.kasbank = DB.kasbank.filter(k=>!(k.kategori==='DP Pembelian' && k.refId===row.id));
-    // Jika lunas langsung dan ada uang muka, kurangi uang muka sebesar yang terpakai
-    const sisaUangMuka = (getUangMukaPerSupplier())[supplier] || 0;
-    if(sisaUangMuka > 0 && total > 0){
-      const dipakaiDariUM = Math.min(total, sisaUangMuka);
-      // Remove old entry first to avoid double on re-edit
-      DB.kasbank = DB.kasbank.filter(k=>!(k.kategori==='Uang Muka Dipakai' && k.refId===row.id));
-      DB.kasbank.push({
-        id: uid(), sumber:'pembelian', tanggal,
-        keterangan:`Uang muka ${esc(supplier)} dipakai untuk pelunasan (${row.noFaktur})`,
         masuk:dipakaiDariUM, keluar:0,
         kategori:'Uang Muka Dipakai', refSupplier:supplier, refId:row.id
       });
@@ -1730,7 +1779,7 @@ function printNota(id){
     </div>
     <div class="form-actions" style="margin-top:18px;">
       <button class="btn btn-primary" style="width:auto;" onclick="printDoc()">🖨 Cetak</button>
-      ${dlMenu("downloadDocPdf('nota_${esc(r.noFaktur)}')","downloadJpegFromEl('docToPrint','nota_${esc(r.noFaktur)}')")}
+      ${dlMenuDoc('nota_'+esc(r.noFaktur),'docToPrint')}
       <button class="btn btn-secondary" onclick="closeModal()">Tutup</button>
     </div>
   `);
@@ -1804,14 +1853,41 @@ function closeAllDlMenus(){
   if(m) m.classList.remove('open');
 }
 
-// Registry untuk menyimpan fungsi unduh — menghindari masalah quote escaping di onclick attribute
+// Registry untuk menyimpan fungsi unduh sebagai function reference (bukan string)
 const _DL_REGISTRY = {};
 
-// Render tombol "⬇ Unduh ▾"
-function dlMenu(pdfCall, jpegCall){
+function _openDlMenu(btnEl, key){
+  const entry = _DL_REGISTRY[key];
+  if(!entry){ return; }
+  const menu = _getDlMenu();
+  menu.innerHTML = '<button id="_dlPdf">📄 PDF</button><button id="_dlJpeg">🖼 JPEG</button>';
+  menu.querySelector('#_dlPdf').onclick  = ()=>{ closeAllDlMenus(); entry.pdf(); };
+  menu.querySelector('#_dlJpeg').onclick = ()=>{ closeAllDlMenus(); entry.jpeg(); };
+  const rect = btnEl.getBoundingClientRect();
+  const spaceBelow = window.innerHeight - rect.bottom;
+  const left = Math.min(rect.left, window.innerWidth - 160);
+  const top = spaceBelow < 100 ? rect.top - 90 - 4 : rect.bottom + 4;
+  menu.style.left = Math.max(8, left) + 'px';
+  menu.style.top  = Math.max(8, top) + 'px';
+  menu.classList.add('open');
+}
+
+// Render tombol "⬇ Unduh ▾" — gunakan dlMenuReport untuk laporan, dlMenuDoc untuk dokumen
+function dlMenuReport(sourceElId, reportTitle, subtitle){
   const key = 'k' + Date.now().toString(36) + Math.random().toString(36).slice(2,5);
-  _DL_REGISTRY[key] = { pdf: pdfCall, jpeg: jpegCall };
-  return `<button class="btn btn-secondary dl-btn" style="width:auto;" onclick="event.stopPropagation();_openDlMenu(this,_DL_REGISTRY['${key}'].pdf,_DL_REGISTRY['${key}'].jpeg)">⬇ Unduh <span class="dl-caret">▾</span></button>`;
+  _DL_REGISTRY[key] = {
+    pdf:  ()=>downloadReportPdf(sourceElId, reportTitle, subtitle),
+    jpeg: ()=>downloadJpegReport(sourceElId, reportTitle, subtitle),
+  };
+  return `<button class="btn btn-secondary dl-btn" style="width:auto;" onclick="event.stopPropagation();_openDlMenu(this,'${key}')">⬇ Unduh <span class="dl-caret">▾</span></button>`;
+}
+function dlMenuDoc(filenamePrefix, elId){
+  const key = 'k' + Date.now().toString(36) + Math.random().toString(36).slice(2,5);
+  _DL_REGISTRY[key] = {
+    pdf:  ()=>downloadDocPdf(filenamePrefix),
+    jpeg: ()=>downloadJpegFromEl(elId||'docToPrint', filenamePrefix),
+  };
+  return `<button class="btn btn-secondary dl-btn" style="width:auto;" onclick="event.stopPropagation();_openDlMenu(this,'${key}')">⬇ Unduh <span class="dl-caret">▾</span></button>`;
 }
 
 // Load html2canvas dynamically jika belum tersedia
@@ -2174,14 +2250,14 @@ function renderProduksi(target){
       <h3>Riwayat Produksi (Giling) <span class="tag">${rows.length} batch</span></h3>
       <p class="help-text" style="margin-top:-4px;">% Rendemen Beras dihitung otomatis = (Premium + Medium) ÷ Gabah Masuk Giling. HPP per batch dihitung dari rata-rata tertimbang harga gabah pada "Sumber Gabah" yang dipilih saat input batch. Tanda ⚠ berarti sumber gabah belum mencakup seluruh qty gabah masuk batch ini.</p>
       <button class="btn btn-primary" style="width:auto;" onclick="editProduksi(null)">+ Batch Baru</button>
-      <button class="btn btn-secondary" style="width:auto;" onclick="printReport('printProduksi','Riwayat Produksi (Giling)','Total batch: ${rows.length} &mdash; Rata-rata rendemen: ${(avgRendemen*100).toFixed(1)}% &mdash; Total HPP: ${fmtRp(totalHppNilai)}')">🖨 Cetak Laporan</button>
-      ${dlMenu("downloadReportPdf('printProduksi','Riwayat Produksi (Giling)','Total batch: ${rows.length} &mdash; Rata-rata rendemen: ${(avgRendemen*100).toFixed(1)}% &mdash; Total HPP: ${fmtRp(totalHppNilai)}')","downloadJpegReport('printProduksi','Riwayat Produksi (Giling)','Total batch: ${rows.length} &mdash; Rata-rata rendemen: ${(avgRendemen*100).toFixed(1)}% &mdash; Total HPP: ${fmtRp(totalHppNilai)}')")}
+      <button class="btn btn-secondary" style="width:auto;" onclick="printReport('printProduksi','Riwayat Produksi (Giling)','Total '+rows.length+' batch')">🖨 Cetak Laporan</button>
+      ${dlMenuReport('printProduksi','Riwayat Produksi (Giling)','Total '+rows.length+' batch')}
       <button class="btn btn-secondary" style="width:auto;" onclick="exportTableToExcel('printProduksi','riwayat_produksi','Produksi')">📊 Unduh Excel</button>
       <div class="m-card-wrap">
         <div class="table-wrap" style="margin-top:14px;" id="printProduksi">
           <table>
             <thead><tr>
-              <th>Batch</th><th>Mulai</th><th>Selesai</th><th>Operator</th><th>Jenis Gabah</th>
+              <th>Batch</th><th>Mulai/Selesai</th><th>Operator</th><th>Bahan / Varietas</th>
               <th>Gabah (Kg)</th><th>Premium (Kg)</th><th>Medium (Kg)</th><th>Menir (Kg)</th><th>Bekatul (Kg)</th><th>Rendemen</th><th>HPP/Kg Gabah</th>
             </tr></thead>
             <tbody>${rowsHtml}</tbody>
@@ -2477,7 +2553,7 @@ function renderGudang(target){
       <p class="help-text" style="margin-top:-4px;">Mutasi otomatis tercatat dari Pembelian (gabah masuk), Produksi (gabah keluar → beras masuk), dan Penjualan (beras keluar). Gunakan "+ Mutasi Manual" untuk koreksi stok, susut, atau barang rusak.</p>
       ${canEdit ? `<button class="btn btn-primary" style="width:auto;" onclick="editMutasi(null)">+ Mutasi Manual</button>` : ''}
       <button class="btn btn-secondary" style="width:auto;" onclick="printReport('printGudang','Riwayat Mutasi Stok','Total catatan: ${history.length}')">🖨 Cetak Laporan</button>
-      ${dlMenu("downloadReportPdf('printGudang','Riwayat Mutasi Stok','Total catatan: ${history.length}')","downloadJpegReport('printGudang','Riwayat Mutasi Stok','Total catatan: ${history.length}')")}
+      ${dlMenuReport('printGudang','Riwayat Mutasi Stok','Total catatan: ${history.length}')}
       <button class="btn btn-secondary" style="width:auto;" onclick="exportTableToExcel('printGudang','riwayat_mutasi_stok')">📊 Unduh Excel</button>
       <div class="table-wrap" style="margin-top:14px;" id="printGudang">
         <table>
@@ -2641,8 +2717,8 @@ function renderDistribusi(target){
     <div class="card">
       <h3>Riwayat Distribusi &amp; Pengiriman <span class="tag">${rows.length} pengiriman</span></h3>
       <button class="btn btn-primary" style="width:auto;" onclick="editPengiriman(null)">+ Pengiriman Baru</button>
-      <button class="btn btn-secondary" style="width:auto;" onclick="printReport('printDistribusi','Riwayat Distribusi &amp; Pengiriman','Total: ${rows.length} pengiriman &mdash; Terkirim: ${totalTerkirim}')">🖨 Cetak Laporan</button>
-      ${dlMenu("downloadReportPdf('printDistribusi','Riwayat Distribusi &amp; Pengiriman','Total: ${rows.length} pengiriman &mdash; Terkirim: ${totalTerkirim}')","downloadJpegReport('printDistribusi','Riwayat Distribusi &amp; Pengiriman','Total: ${rows.length} pengiriman &mdash; Terkirim: ${totalTerkirim}')")}
+      <button class="btn btn-secondary" style="width:auto;" onclick="printReport('printDistribusi','Riwayat Distribusi &amp; Pengiriman','Total '+rows.length+' pengiriman')">🖨 Cetak Laporan</button>
+      ${dlMenuReport('printDistribusi','Riwayat Distribusi &amp; Pengiriman','Total '+rows.length+' pengiriman')}
       <button class="btn btn-secondary" style="width:auto;" onclick="exportTableToExcel('printDistribusi','riwayat_distribusi')">📊 Unduh Excel</button>
       <div class="table-wrap" style="margin-top:14px;" id="printDistribusi">
         <table>
@@ -2854,7 +2930,7 @@ function printSuratJalan(id){
     </div>
     <div class="form-actions" style="margin-top:18px;">
       <button class="btn btn-primary" style="width:auto;" onclick="printDoc()">🖨 Cetak</button>
-      ${dlMenu("downloadDocPdf('surat_jalan_${esc(r.noResi)}')","downloadJpegFromEl('docToPrint','surat_jalan_${esc(r.noResi)}')")}
+      ${dlMenuDoc('surat_jalan_'+esc(r.noResi),'docToPrint')}
       <button class="btn btn-secondary" onclick="closeModal()">Tutup</button>
     </div>
   `);
@@ -3000,7 +3076,7 @@ function renderBahanPendukung(target){
       <p class="help-text" style="margin-top:-4px;">Pembelian dari supplier (roll karet, karung, benang jahit, dll). Tercatat otomatis sebagai beban di Kas &amp; Bank.</p>
       <button class="btn btn-primary" style="width:auto;" onclick="editPembelianBahan(null)">+ Pembelian Baru</button>
       <button class="btn btn-secondary" style="width:auto;" onclick="printReport('printPembelianBahan','Pembelian Bahan Pendukung','Total: ${DB.pembelianBahan.length} transaksi &mdash; Total biaya: ${fmtRp(totalBeli)}')">🖨 Cetak</button>
-      ${dlMenu("downloadReportPdf('printPembelianBahan','Pembelian Bahan Pendukung','Total: ${DB.pembelianBahan.length} transaksi &mdash; Total biaya: ${fmtRp(totalBeli)}')","downloadJpegReport('printPembelianBahan','Pembelian Bahan Pendukung','Total: ${DB.pembelianBahan.length} transaksi &mdash; Total biaya: ${fmtRp(totalBeli)}')")}
+      ${dlMenuReport('printPembelianBahan','Pembelian Bahan Pendukung','Total: ${DB.pembelianBahan.length} transaksi &mdash; Total biaya: ${fmtRp(totalBeli)}')}
       <button class="btn btn-secondary" style="width:auto;" onclick="exportTableToExcel('printPembelianBahan','pembelian_bahan_pendukung','Bahan Pendukung')">📊 Excel</button>
       <div class="table-wrap" style="margin-top:14px;" id="printPembelianBahan">
         <table>
@@ -3015,7 +3091,7 @@ function renderBahanPendukung(target){
       <p class="help-text" style="margin-top:-4px;">Catat pemakaian bahan pendukung untuk mengurangi stok, opsional dikaitkan dengan batch produksi tertentu untuk tracking biaya per batch.</p>
       <button class="btn btn-primary" style="width:auto;" onclick="editPemakaianBahan(null)">+ Catat Pemakaian</button>
       <button class="btn btn-secondary" style="width:auto;" onclick="printReport('printPemakaianBahan','Pemakaian Bahan Pendukung','Total: ${DB.pemakaianBahan.length} catatan &mdash; Total nilai: ${fmtRp(totalPakai)}')">🖨 Cetak</button>
-      ${dlMenu("downloadReportPdf('printPemakaianBahan','Pemakaian Bahan Pendukung','Total: ${DB.pemakaianBahan.length} catatan &mdash; Total nilai: ${fmtRp(totalPakai)}')","downloadJpegReport('printPemakaianBahan','Pemakaian Bahan Pendukung','Total: ${DB.pemakaianBahan.length} catatan &mdash; Total nilai: ${fmtRp(totalPakai)}')")}
+      ${dlMenuReport('printPemakaianBahan','Pemakaian Bahan Pendukung','Total: ${DB.pemakaianBahan.length} catatan &mdash; Total nilai: ${fmtRp(totalPakai)}')}
       <button class="btn btn-secondary" style="width:auto;" onclick="exportTableToExcel('printPemakaianBahan','pemakaian_bahan_pendukung','Pemakaian')">📊 Excel</button>
       <div class="table-wrap" style="margin-top:14px;" id="printPemakaianBahan">
         <table>
@@ -3824,8 +3900,8 @@ function renderPenjualan(target){
         Produk Samping &mdash; ${Object.entries(stok).filter(([k])=>!PRODUK_BERAS_UTAMA.includes(k)&&(stok[k]||0)>0).map(([k,v])=>`${esc(k)}: <b>${fmtNum(v)} kg</b>`).join(' &middot; ')||'<b>—</b>'}
       </p>
       <button class="btn btn-primary" style="width:auto;" onclick="editPenjualan(null)">+ Transaksi Baru</button>
-      <button class="btn btn-secondary" style="width:auto;" onclick="printReport('printPenjualan','Riwayat Penjualan','Total transaksi: ${rows.length} &mdash; Total nilai: ${fmtRp(totalNilai)} &mdash; Total piutang: ${fmtRp(totalPiutang)}')">🖨 Cetak Laporan</button>
-      ${dlMenu("downloadReportPdf('printPenjualan','Riwayat Penjualan','Total transaksi: ${rows.length} &mdash; Total nilai: ${fmtRp(totalNilai)} &mdash; Total piutang: ${fmtRp(totalPiutang)}')","downloadJpegReport('printPenjualan','Riwayat Penjualan','Total transaksi: ${rows.length} &mdash; Total nilai: ${fmtRp(totalNilai)} &mdash; Total piutang: ${fmtRp(totalPiutang)}')")}
+      <button class="btn btn-secondary" style="width:auto;" onclick="printReport('printPenjualan','Riwayat Penjualan','Total '+rows.length+' transaksi — Nilai: '+fmtRp(totalNilai))">🖨 Cetak Laporan</button>
+      ${dlMenuReport('printPenjualan','Riwayat Penjualan','Total '+rows.length+' transaksi')}
       <button class="btn btn-secondary" style="width:auto;" onclick="exportTableToExcel('printPenjualan','riwayat_penjualan','Penjualan')">📊 Unduh Excel</button>
       <div class="m-card-wrap">
         <div class="table-wrap" style="margin-top:14px;" id="printPenjualan">
@@ -4181,7 +4257,7 @@ function printInvoice(id){
         ${pelanggan?`<b>Alamat:</b> ${esc(pelanggan.alamat||'-')}<br><b>Telepon:</b> ${esc(pelanggan.telp||'-')}`:''}
       </div>
       <table style="width:100%;">
-        <thead><tr><th>Produk</th><th>Qty (Kg)</th><th>Harga/Kg</th><th>Diskon</th><th>Subtotal</th></tr></thead>
+        <thead><tr><th>Produk</th><th>Qty (Kg)</th><th>Harga/Kg</th><th>Subtotal</th></tr></thead>
         <tbody>
           <tr>
             <td>${esc(produkLabel)}</td>
@@ -4202,7 +4278,7 @@ function printInvoice(id){
     </div>
     <div class="form-actions" style="margin-top:18px;">
       <button class="btn btn-primary" style="width:auto;" onclick="printDoc()">🖨 Cetak</button>
-      ${dlMenu("downloadDocPdf('invoice_' + r.invoice)","downloadJpegFromEl('docToPrint','invoice_' + r.invoice)")}
+      ${dlMenuDoc('invoice_' + r.invoice,'docToPrint')}
       <button class="btn btn-secondary" onclick="closeModal()">Tutup</button>
     </div>
   `);
@@ -4269,7 +4345,7 @@ function renderKasBank(target){
         <button class="btn btn-primary" style="width:auto;" onclick="editKasManual(null)">+ Catatan Manual</button>
         <button class="btn btn-secondary" style="width:auto;" onclick="editSaldoAwal()">Ubah Saldo Awal</button>
         <button class="btn btn-secondary" style="width:auto;" onclick="printReport('printKasBank','Buku Kas &amp; Bank','Saldo awal: ${fmtRp(DB.saldoAwalKas)} &mdash; Saldo akhir: ${fmtRp(saldoAkhir)}')">🖨 Cetak Laporan</button>
-        ${dlMenu("downloadReportPdf('printKasBank','Buku Kas &amp; Bank','Saldo awal: ${fmtRp(DB.saldoAwalKas)} &mdash; Saldo akhir: ${fmtRp(saldoAkhir)}')","downloadJpegReport('printKasBank','Buku Kas &amp; Bank','Saldo awal: ${fmtRp(DB.saldoAwalKas)} &mdash; Saldo akhir: ${fmtRp(saldoAkhir)}')")}
+        ${dlMenuReport('printKasBank','Buku Kas &amp; Bank','Saldo awal: ${fmtRp(DB.saldoAwalKas)} &mdash; Saldo akhir: ${fmtRp(saldoAkhir)}')}
       </div>
       <div class="table-wrap" style="margin-top:10px;" id="printKasBank">
         <table>
@@ -4448,7 +4524,7 @@ function showKuitansiPembayaran(supplier, tanggal, keterangan, totalBayar, total
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
       <button class="btn btn-primary" style="width:auto;" onclick="printDoc()">🖨 Cetak Kuitansi</button>
-      ${dlMenu("downloadDocPdf('kuitansi_${noKuitansi}')","downloadJpegFromEl('docToPrint','kuitansi_${noKuitansi}')")}
+      ${dlMenuDoc('kuitansi_${noKuitansi}','docToPrint')}
       <button class="btn btn-secondary" onclick="closeModal()">Tutup</button>
     </div>
     ${buildKuitansiDocHtml(kuitansiRecord)}
@@ -4605,7 +4681,7 @@ function bukaKuitansi(id){
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
       <button class="btn btn-primary" style="width:auto;" onclick="printDoc()">🖨 Cetak</button>
-      ${dlMenu("downloadDocPdf('kuitansi_${k.noKuitansi}')","downloadJpegFromEl('docToPrint','kuitansi_${k.noKuitansi}')")}
+      ${dlMenuDoc('kuitansi_${k.noKuitansi}','docToPrint')}
       <button class="btn btn-danger btn-sm" style="width:auto;" onclick="hapusKuitansi('${k.id}')">🗑 Hapus</button>
       <button class="btn btn-secondary" onclick="closeModal()">Tutup</button>
     </div>
@@ -5273,8 +5349,8 @@ function renderHutangPiutang(target){
 
     <div class="card">
       <h3>Rekap Hutang per Supplier <span class="tag">${rekapSupplier.length} supplier</span></h3>
-      <button class="btn btn-secondary" style="width:auto;" onclick="printReport('printRekapSupplier','Rekap Hutang per Supplier','Total hutang usaha: ${fmtRp(totalHutang)}')">🖨 Cetak</button>
-      ${dlMenu("downloadReportPdf('printRekapSupplier','Rekap Hutang per Supplier','Total hutang usaha: ${fmtRp(totalHutang)}')","downloadJpegReport('printRekapSupplier','Rekap Hutang per Supplier','Total hutang usaha: ${fmtRp(totalHutang)}')")}
+      <button class="btn btn-secondary" style="width:auto;" onclick="printReport('printRekapSupplier','Rekap Hutang per Supplier','Total: '+fmtRp(totalHutang))">🖨 Cetak</button>
+      ${dlMenuReport('printRekapSupplier','Rekap Hutang per Supplier','Total hutang: '+fmtRp(totalHutang))}
       <button class="btn btn-secondary" style="width:auto;" onclick="exportTableToExcel('printRekapSupplier','rekap_hutang_supplier')">📊 Excel</button>
       <div class="table-wrap" style="margin-top:14px;" id="printRekapSupplier">
         <table>
@@ -5286,8 +5362,8 @@ function renderHutangPiutang(target){
 
     <div class="card">
       <h3>Rekap Piutang per Pelanggan <span class="tag">${rekapCustomer.length} pelanggan</span></h3>
-      <button class="btn btn-secondary" style="width:auto;" onclick="printReport('printRekapCustomer','Rekap Piutang per Pelanggan','Total piutang usaha: ${fmtRp(totalPiutang)}')">🖨 Cetak</button>
-      ${dlMenu("downloadReportPdf('printRekapCustomer','Rekap Piutang per Pelanggan','Total piutang usaha: ${fmtRp(totalPiutang)}')","downloadJpegReport('printRekapCustomer','Rekap Piutang per Pelanggan','Total piutang usaha: ${fmtRp(totalPiutang)}')")}
+      <button class="btn btn-secondary" style="width:auto;" onclick="printReport('printRekapCustomer','Rekap Piutang per Pelanggan','Total: '+fmtRp(totalPiutang))">🖨 Cetak</button>
+      ${dlMenuReport('printRekapCustomer','Rekap Piutang per Pelanggan','Total: '+fmtRp(totalPiutang))}
       <button class="btn btn-secondary" style="width:auto;" onclick="exportTableToExcel('printRekapCustomer','rekap_piutang_pelanggan')">📊 Excel</button>
       <div class="table-wrap" style="margin-top:14px;" id="printRekapCustomer">
         <table>
@@ -5485,7 +5561,7 @@ function renderLabaRugi(target){
     <div class="card" style="max-width:640px;">
       <h3>Laporan Laba Rugi <span class="tag">Akumulatif (semua transaksi)</span></h3>
       <button class="btn btn-secondary btn-sm" style="width:auto; margin-bottom:12px;" onclick="printReport('printLabaRugi','Laporan Laba Rugi','Akumulatif seluruh transaksi tercatat')">🖨 Cetak Laporan</button>
-      ${dlMenu("downloadReportPdf('printLabaRugi','Laporan Laba Rugi','Akumulatif seluruh transaksi tercatat')","downloadJpegReport('printLabaRugi','Laporan Laba Rugi','Akumulatif seluruh transaksi tercatat')")}
+      ${dlMenuReport('printLabaRugi','Laporan Laba Rugi','Akumulatif seluruh transaksi tercatat')}
       <div id="printLabaRugi">
       <div class="table-wrap">
         <table>
@@ -5554,7 +5630,7 @@ function renderNeraca(target){
       </div>
     </div>
     <button class="btn btn-secondary btn-sm" style="width:auto; margin-bottom:14px;" onclick="printReport('printNeraca','Neraca','Posisi keuangan per tanggal ${esc(fmtDate(todayStr()))}')">🖨 Cetak Laporan</button>
-    ${dlMenu("downloadReportPdf('printNeraca','Neraca','Posisi keuangan per tanggal ${esc(fmtDate(todayStr()))}')","downloadJpegReport('printNeraca','Neraca','Posisi keuangan per tanggal ${esc(fmtDate(todayStr()))}')")}
+    ${dlMenuReport('printNeraca','Neraca','Posisi keuangan per tanggal ${esc(fmtDate(todayStr()))}')}
     <div id="printNeraca">
     <div class="grid grid-2">
       <div class="card">
@@ -5925,7 +6001,7 @@ function renderLaporan(target){
       <h3>Rekap Mingguan <span class="tag">${weekly.length} minggu</span></h3>
       <p class="help-text" style="margin-top:-4px;">Ringkasan aktivitas usaha per minggu (Senin&ndash;Minggu): pembelian gabah, hasil produksi, penjualan, dan laba/rugi.</p>
       <button class="btn btn-secondary" style="width:auto;" onclick="printReport('printRekapMingguan','Rekap Mingguan','Total ${weekly.length} minggu tercatat')">🖨 Cetak</button>
-      ${dlMenu("downloadReportPdf('printRekapMingguan','Rekap Mingguan','Total ${weekly.length} minggu tercatat')","downloadJpegReport('printRekapMingguan','Rekap Mingguan','Total ${weekly.length} minggu tercatat')")}
+      ${dlMenuReport('printRekapMingguan','Rekap Mingguan','Total ${weekly.length} minggu tercatat')}
       <button class="btn btn-secondary" style="width:auto;" onclick="exportTableToExcel('printRekapMingguan','rekap_mingguan','Mingguan')">📊 Excel</button>
       <div class="table-wrap" style="margin-top:14px;" id="printRekapMingguan">
         <table>
@@ -5939,7 +6015,7 @@ function renderLaporan(target){
       <h3>Rekap Bulanan <span class="tag">${monthly.length} bulan</span></h3>
       <p class="help-text" style="margin-top:-4px;">Ringkasan seluruh aktivitas usaha per bulan: pembelian gabah, hasil produksi, penjualan, dan laba/rugi.</p>
       <button class="btn btn-secondary" style="width:auto;" onclick="printReport('printRekapBulanan','Rekap Bulanan','Total ${monthly.length} bulan tercatat')">🖨 Cetak</button>
-      ${dlMenu("downloadReportPdf('printRekapBulanan','Rekap Bulanan','Total ${monthly.length} bulan tercatat')","downloadJpegReport('printRekapBulanan','Rekap Bulanan','Total ${monthly.length} bulan tercatat')")}
+      ${dlMenuReport('printRekapBulanan','Rekap Bulanan','Total ${monthly.length} bulan tercatat')}
       <button class="btn btn-secondary" style="width:auto;" onclick="exportTableToExcel('printRekapBulanan','rekap_bulanan','Bulanan')">📊 Excel</button>
       <div class="table-wrap" style="margin-top:14px;" id="printRekapBulanan">
         <table>
@@ -5952,7 +6028,7 @@ function renderLaporan(target){
     <div class="card">
       <h3>Rekap Tahunan <span class="tag">${yearly.length} tahun</span></h3>
       <button class="btn btn-secondary" style="width:auto;" onclick="printReport('printRekapTahunan','Rekap Tahunan','Total ${yearly.length} tahun tercatat')">🖨 Cetak</button>
-      ${dlMenu("downloadReportPdf('printRekapTahunan','Rekap Tahunan','Total ${yearly.length} tahun tercatat')","downloadJpegReport('printRekapTahunan','Rekap Tahunan','Total ${yearly.length} tahun tercatat')")}
+      ${dlMenuReport('printRekapTahunan','Rekap Tahunan','Total ${yearly.length} tahun tercatat')}
       <button class="btn btn-secondary" style="width:auto;" onclick="exportTableToExcel('printRekapTahunan','rekap_tahunan','Tahunan')">📊 Excel</button>
       <div class="table-wrap" style="margin-top:14px;" id="printRekapTahunan">
         <table>
@@ -6004,7 +6080,7 @@ function renderDashboard(target){
   target.innerHTML = `
     <div class="form-actions" style="margin-bottom:14px;">
       <button class="btn btn-secondary" style="width:auto;" onclick="printReport('printDashboard','Dashboard Ringkasan','Per ${esc(fmtDate(todayStr()))}')">🖨 Cetak Dashboard</button>
-      ${dlMenu("downloadReportPdf('printDashboard','Dashboard Ringkasan','Per ${esc(fmtDate(todayStr()))}')","downloadJpegReport('printDashboard','Dashboard Ringkasan','Per ${esc(fmtDate(todayStr()))}')")}
+      ${dlMenuReport('printDashboard','Dashboard Ringkasan','Per ${esc(fmtDate(todayStr()))}')}
     </div>
     <div id="printDashboard">
 
