@@ -1277,8 +1277,7 @@ function renderPembelian(target){
         <td><span class="badge" style="background:${kategori==='Beras'?'#FEF3C7':'#EEF1F4'}; color:var(--ink);">${kategori}</span></td>
         <td>${esc(jenisLabel)}</td>
         <td class="num-cell">${fmtNum(r.qty)} kg</td>
-        <td class="num-cell">${fmtRp(r.harga)}</td>
-        <td class="num-cell">${fmtRp(r.angkut)}</td>
+        <td class="num-cell">${fmtRp(r.harga)}${r.angkut>0?`<br><span style="font-size:0.7rem;color:var(--ink-soft)">+${fmtRp(r.angkut)} angkut</span>`:''}  </td>
         <td class="num-cell">${fmtRp(r.total)}</td>
         <td class="num-cell">${fmtRp(totalBayar)}</td>
         <td class="num-cell"><b ${sisaHutang>0?'style="color:var(--red);"':''}>${sisaHutang>0?fmtRp(sisaHutang):'—'}</b></td>
@@ -1359,15 +1358,15 @@ function renderPembelian(target){
     <div class="card">
       <h3>Riwayat Pembelian <span class="tag">${rows.length} transaksi</span></h3>
       <button class="btn btn-primary" style="width:auto;" onclick="editPembelian(null)">+ Transaksi Baru</button>
-      <button class="btn btn-secondary" style="width:auto;" onclick="printReport('printPembelian','Riwayat Pembelian','Total transaksi: ${rows.length} &mdash; Total nilai: ${fmtRp(totalNilai)}')">🖨 Cetak Laporan</button>
-      ${dlMenu("downloadReportPdf('printPembelian','Riwayat Pembelian','Total transaksi: ${rows.length} &mdash; Total nilai: ${fmtRp(totalNilai)}')","downloadJpegReport('printPembelian','Riwayat Pembelian','Total transaksi: ${rows.length} &mdash; Total nilai: ${fmtRp(totalNilai)}')")}
+      <button class="btn btn-secondary" style="width:auto;" onclick="printReport('printPembelian','Riwayat Pembelian','Total transaksi: '+rows.length+' \u2014 Total nilai: '+fmtRp(totalNilai))">🖨 Cetak Laporan</button>
+      ${dlMenu(`downloadReportPdf('printPembelian','Riwayat Pembelian','Total transaksi: ${rows.length} \u2014 Total nilai: ${fmtRp(totalNilai)}')`,`downloadJpegReport('printPembelian','Riwayat Pembelian','Total transaksi: ${rows.length} \u2014 Total nilai: ${fmtRp(totalNilai)}')`)}
       <button class="btn btn-secondary" style="width:auto;" onclick="exportTableToExcel('printPembelian','riwayat_pembelian','Pembelian')">📊 Unduh Excel</button>
       <div class="m-card-wrap">
         <div class="table-wrap" style="margin-top:14px;" id="printPembelian">
           <table>
             <thead><tr>
               <th>Tanggal</th><th>No. Faktur</th><th>Supplier</th><th>Kategori</th><th>Jenis</th>
-              <th>Qty</th><th>Harga/Kg</th><th>Angkut</th><th>Total</th><th>Sudah Dibayar</th><th>Sisa Hutang</th><th>Status</th>
+              <th>Qty</th><th>Harga/Kg</th><th>Total</th><th>Sudah Dibayar</th><th>Sisa Hutang</th><th>Status</th>
             </tr></thead>
             <tbody>${rowsHtml}</tbody>
           </table>
@@ -1784,21 +1783,17 @@ function _getDlMenu(){
 
 function _openDlMenu(btnEl, pdfCall, jpegCall){
   const menu = _getDlMenu();
-  menu.innerHTML = `
-    <button onclick="closeAllDlMenus();${pdfCall}">📄 PDF</button>
-    <button onclick="closeAllDlMenus();${jpegCall}">🖼 JPEG</button>
-  `;
-  // Position: check if near bottom → open upward
+  const runPdf = new Function(pdfCall);
+  const runJpeg = new Function(jpegCall);
+  menu.innerHTML = `<button id="_dlPdf">📄 PDF</button><button id="_dlJpeg">🖼 JPEG</button>`;
+  menu.querySelector('#_dlPdf').onclick  = ()=>{ closeAllDlMenus(); runPdf(); };
+  menu.querySelector('#_dlJpeg').onclick = ()=>{ closeAllDlMenus(); runJpeg(); };
+  // Position
   const rect = btnEl.getBoundingClientRect();
-  const menuH = 96; // approx height of 2-item menu
+  const menuH = 90;
   const spaceBelow = window.innerHeight - rect.bottom;
   const left = Math.min(rect.left, window.innerWidth - 160);
-  let top;
-  if(spaceBelow < menuH + 8){
-    top = rect.top - menuH - 4; // open upward
-  } else {
-    top = rect.bottom + 4; // open downward
-  }
+  const top = spaceBelow < menuH + 8 ? rect.top - menuH - 4 : rect.bottom + 4;
   menu.style.left = Math.max(8, left) + 'px';
   menu.style.top  = Math.max(8, top) + 'px';
   menu.classList.add('open');
@@ -1809,59 +1804,74 @@ function closeAllDlMenus(){
   if(m) m.classList.remove('open');
 }
 
+// Registry untuk menyimpan fungsi unduh — menghindari masalah quote escaping di onclick attribute
+const _DL_REGISTRY = {};
+
 // Render tombol "⬇ Unduh ▾"
 function dlMenu(pdfCall, jpegCall){
-  // Encode calls to pass through onclick attribute safely
-  const safeP = pdfCall.replace(/"/g,"'");
-  const safeJ = jpegCall.replace(/"/g,"'");
-  return `<button class="btn btn-secondary dl-btn" style="width:auto;" onclick="event.stopPropagation();_openDlMenu(this,'${safeP}','${safeJ}')">⬇ Unduh <span class="dl-caret">▾</span></button>`;
+  const key = 'k' + Date.now().toString(36) + Math.random().toString(36).slice(2,5);
+  _DL_REGISTRY[key] = { pdf: pdfCall, jpeg: jpegCall };
+  return `<button class="btn btn-secondary dl-btn" style="width:auto;" onclick="event.stopPropagation();_openDlMenu(this,_DL_REGISTRY['${key}'].pdf,_DL_REGISTRY['${key}'].jpeg)">⬇ Unduh <span class="dl-caret">▾</span></button>`;
+}
+
+// Load html2canvas dynamically jika belum tersedia
+function _loadHtml2Canvas(callback){
+  if(typeof html2canvas !== 'undefined'){ callback(); return; }
+  const s = document.createElement('script');
+  s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+  s.onload = callback;
+  s.onerror = ()=>showToast('Gagal memuat library JPEG. Cek koneksi internet.');
+  document.head.appendChild(s);
 }
 
 // Download content as JPEG via html2canvas
 function downloadJpegFromEl(elId, filename){
   const el = document.getElementById(elId);
   if(!el){ showToast('Konten tidak ditemukan.'); return; }
-  if(typeof html2canvas === 'undefined'){ showToast('Library JPEG belum dimuat. Pastikan ada koneksi internet saat buka aplikasi.'); return; }
-  showToast('Membuat JPEG...');
-  html2canvas(el, {
-    scale: 2, useCORS: true, allowTaint: true,
-    backgroundColor: '#FFFDF8',
-    windowWidth: Math.max(el.scrollWidth + 64, 800),
-    scrollX: 0, scrollY: -window.scrollY, logging: false
-  }).then(canvas=>{
-    const link = document.createElement('a');
-    link.download = (filename||'dokumen').replace(/['"]/g,'') + '_' + todayStr() + '.jpg';
-    link.href = canvas.toDataURL('image/jpeg', 0.95);
-    link.click();
-    showToast('JPEG berhasil diunduh.');
-  }).catch(e=>{ console.error(e); showToast('Gagal membuat JPEG.'); });
-}
-
-// JPEG untuk laporan — bangun HTML dulu di div tersembunyi, lalu screenshot
-function downloadJpegReport(sourceElId, reportTitle, subtitle){
-  if(typeof html2canvas === 'undefined'){ showToast('Library JPEG belum dimuat. Pastikan ada koneksi internet saat buka aplikasi.'); return; }
-  const html = buildReportHtml(sourceElId, reportTitle, subtitle);
-  if(!html){ showToast('Konten tidak ditemukan.'); return; }
-  const tmp = document.createElement('div');
-  tmp.style.cssText = 'position:fixed;left:-9999px;top:0;width:900px;background:#fff;padding:28px;font-family:Inter,sans-serif;font-size:13px;';
-  tmp.innerHTML = `<style>${REPORT_STYLES}</style>${html}`;
-  document.body.appendChild(tmp);
-  showToast('Membuat JPEG...');
-  // Wait for fonts/images to render
-  setTimeout(()=>{
-    html2canvas(tmp, {
+  showToast('Memuat library...');
+  _loadHtml2Canvas(()=>{
+    showToast('Membuat JPEG...');
+    html2canvas(el, {
       scale: 2, useCORS: true, allowTaint: true,
-      backgroundColor: '#fff', windowWidth: 900,
-      scrollX: 0, scrollY: 0, logging: false
+      backgroundColor: '#FFFDF8',
+      windowWidth: Math.max(el.scrollWidth + 64, 800),
+      scrollX: 0, scrollY: -window.scrollY, logging: false
     }).then(canvas=>{
-      document.body.removeChild(tmp);
       const link = document.createElement('a');
-      link.download = reportTitle.toLowerCase().replace(/[^a-z0-9]+/g,'_') + '_' + todayStr() + '.jpg';
+      link.download = (filename||'dokumen').replace(/['"]/g,'') + '_' + todayStr() + '.jpg';
       link.href = canvas.toDataURL('image/jpeg', 0.95);
       link.click();
       showToast('JPEG berhasil diunduh.');
-    }).catch(e=>{ document.body.removeChild(tmp); console.error(e); showToast('Gagal membuat JPEG.'); });
-  }, 300);
+    }).catch(e=>{ console.error(e); showToast('Gagal membuat JPEG.'); });
+  });
+}
+
+// JPEG untuk laporan
+function downloadJpegReport(sourceElId, reportTitle, subtitle){
+  const html = buildReportHtml(sourceElId, reportTitle, subtitle);
+  if(!html){ showToast('Konten tidak ditemukan.'); return; }
+  showToast('Memuat library...');
+  _loadHtml2Canvas(()=>{
+    const tmp = document.createElement('div');
+    tmp.style.cssText = 'position:fixed;left:-9999px;top:0;width:900px;background:#fff;padding:28px;font-family:Inter,sans-serif;font-size:13px;line-height:1.5;';
+    tmp.innerHTML = `<style>${REPORT_STYLES} body{padding:0;}</style>${html}`;
+    document.body.appendChild(tmp);
+    showToast('Membuat JPEG...');
+    setTimeout(()=>{
+      html2canvas(tmp, {
+        scale: 2, useCORS: true, allowTaint: true,
+        backgroundColor: '#fff', windowWidth: 900,
+        scrollX: 0, scrollY: 0, logging: false
+      }).then(canvas=>{
+        document.body.removeChild(tmp);
+        const link = document.createElement('a');
+        link.download = reportTitle.toLowerCase().replace(/[^a-z0-9]+/g,'_') + '_' + todayStr() + '.jpg';
+        link.href = canvas.toDataURL('image/jpeg', 0.95);
+        link.click();
+        showToast('JPEG berhasil diunduh.');
+      }).catch(e=>{ document.body.removeChild(tmp); console.error(e); showToast('Gagal membuat JPEG.'); });
+    }, 400);
+  });
 }
 
 // Close dropdown when clicking outside
@@ -2119,17 +2129,15 @@ function renderProduksi(target){
       return `
       <tr class="tr-clickable" onclick="showActionSheet(event,'${esc(r.batch)} — ${esc(r.jenisGabah)}',[{label:'Ubah',icon:'✏️',action:()=>editProduksi('${r.id}')}${SESSION.role!=='KASIR'?`,{label:'Hapus',icon:'🗑',action:()=>deleteProduksi('${r.id}'),danger:true}`:``}])">
         <td class="mono">${esc(r.batch)}</td>
-        <td>${fmtDate(r.mulai)}</td>
-        <td>${fmtDate(r.selesai)}</td>
+        <td>${fmtDate(r.mulai)}${r.selesai&&r.selesai!==r.mulai?`<br><span style="font-size:0.75rem;color:var(--ink-soft);">s/d ${fmtDate(r.selesai)}</span>`:''}</td>
         <td>${esc(r.operator)}</td>
         <td>${esc(r.jenisGabah)}</td>
         <td class="num-cell">${fmtNum(r.gabah)}</td>
         <td class="num-cell">${fmtNum(r.premium)}</td>
         <td class="num-cell">${fmtNum(r.medium)}</td>
-        <td class="num-cell">${fmtNum(r.menir)}</td>
-        <td class="num-cell">${fmtNum(r.bekatul)}</td>
+        <td class="num-cell">${fmtNum(Number(r.menir||0)+Number(r.bekatul||0))}<br><span style="font-size:0.7rem;color:var(--ink-soft);">M:${fmtNum(r.menir)} B:${fmtNum(r.bekatul)}</span></td>
         <td class="num-cell"><b>${(rendemen*100).toFixed(1)}%</b></td>
-        <td class="num-cell">${hppDisplay}<br><span style="font-size:0.72rem; color:var(--ink-soft);">Beras: ${hppBerasDisplay}</span></td>
+        <td class="num-cell">${hppDisplay}</td>
       </tr>
     `;}).join('');
   }
@@ -3729,14 +3737,12 @@ function renderPenjualan(target){
         <td>${fmtDate(r.tanggal)}</td>
         <td class="mono">${esc(r.invoice)}</td>
         <td>${esc(r.pelanggan)}</td>
-        <td><span class="badge" style="background:${kategori==='Gabah'?'#FEF3C7':'#EEF1F4'}; color:var(--ink);">${kategori}</span></td>
+        <td><span class="badge" style="background:${kategori==='Gabah'?'#FEF3C7':kategori==='Produk Samping'?'#E0F2FE':'#EEF1F4'}; color:var(--ink);">${kategori==='Produk Samping'?'Samping':kategori}</span></td>
         <td>${esc(produkLabel)}</td>
         <td class="num-cell">${fmtNum(r.qty)} kg</td>
-        <td class="num-cell">${fmtRp(r.harga)}</td>
-        <td class="num-cell">${fmtRp(r.diskon)}</td>
-        <td class="num-cell">${fmtRp(r.total)}</td>
+        <td class="num-cell">${fmtRp(r.harga)}${r.diskon>0?`<br><span style="font-size:0.7rem;color:var(--ink-soft)">-${fmtRp(r.diskon)}</span>`:''}</td>
+        <td class="num-cell">${fmtRp(r.total)}${kirimCell?`<br>${kirimCell}`:''}</td>
         <td class="num-cell">${getSisaPiutangPenjualan(r)>0?fmtRp(getSisaPiutangPenjualan(r)):'-'}</td>
-        <td>${kirimCell}</td>
       </tr>
     `;}).join('');
   }
@@ -3826,7 +3832,7 @@ function renderPenjualan(target){
           <table>
             <thead><tr>
               <th>Tanggal</th><th>Invoice</th><th>Pelanggan</th><th>Kategori</th><th>Produk</th>
-              <th>Qty</th><th>Harga/Kg</th><th>Diskon</th><th>Total</th><th>Piutang</th><th>Pengiriman</th>
+              <th>Qty</th><th>Harga/Kg</th><th>Total</th><th>Piutang</th>
             </tr></thead>
             <tbody>${rowsHtml}</tbody>
           </table>
@@ -4225,19 +4231,12 @@ function renderKasBank(target){
     rowsHtml = `<tr><td colspan="7"><div class="empty-state"><div class="stamp">💰</div><div>Belum ada transaksi kas. Catatan akan otomatis muncul dari Form Pembelian &amp; Penjualan, atau tambahkan transaksi manual.</div></div></td></tr>`;
   } else {
     rowsHtml = withSaldo.slice().reverse().map(r=>`
-      <tr>
+      <tr class="${r.sumber==='manual'?'tr-clickable':''}" ${r.sumber==='manual'?`onclick="showActionSheet(event,'${esc(r.keterangan)}',[{label:'Ubah',icon:'✏️',action:()=>editKasManual('${r.id}')},{label:'Hapus',icon:'🗑',action:()=>deleteKasManual('${r.id}'),danger:true}])"`:''}>
         <td>${fmtDate(r.tanggal)}</td>
-        <td>${esc(r.keterangan)}</td>
-        <td><span class="badge" style="background:var(--paper-2); color:var(--ink);">${esc(r.kategori||'-')}</span></td>
+        <td>${esc(r.keterangan)}<br><span class="badge" style="font-size:0.66rem;background:var(--paper-2);color:var(--ink-soft);padding:1px 6px;">${esc(r.kategori||'-')}</span></td>
         <td class="num-cell">${r.masuk>0?fmtRp(r.masuk):'-'}</td>
         <td class="num-cell">${r.keluar>0?fmtRp(r.keluar):'-'}</td>
         <td class="num-cell"><b>${fmtRp(r.saldo)}</b></td>
-        <td>
-          ${r.sumber==='manual' ? `
-            <button class="btn btn-sm btn-secondary" onclick="editKasManual('${r.id}')">Ubah</button>
-            <button class="btn btn-sm btn-danger" onclick="deleteKasManual('${r.id}')">Hapus</button>
-          ` : `<span style="font-size:0.74rem; color:var(--ink-soft);">Otomatis (${r.sumber})</span>`}
-        </td>
       </tr>
     `).join('');
   }
@@ -4274,7 +4273,7 @@ function renderKasBank(target){
       </div>
       <div class="table-wrap" style="margin-top:10px;" id="printKasBank">
         <table>
-          <thead><tr><th>Tanggal</th><th>Keterangan</th><th>Kategori</th><th>Kas Masuk</th><th>Kas Keluar</th><th>Saldo</th><th>Aksi</th></tr></thead>
+          <thead><tr><th>Tanggal</th><th>Keterangan / Kategori</th><th>Kas Masuk</th><th>Kas Keluar</th><th>Saldo</th></tr></thead>
           <tbody>${rowsHtml}</tbody>
         </table>
       </div>
@@ -5930,7 +5929,7 @@ function renderLaporan(target){
       <button class="btn btn-secondary" style="width:auto;" onclick="exportTableToExcel('printRekapMingguan','rekap_mingguan','Mingguan')">📊 Excel</button>
       <div class="table-wrap" style="margin-top:14px;" id="printRekapMingguan">
         <table>
-          <thead><tr><th>Minggu</th><th>Qty Gabah Dibeli</th><th>Total Pembelian</th><th>Beras Diproduksi</th><th>Rincian Penjualan per Produk</th><th>Nilai Penjualan</th><th>Laba/Rugi</th></tr></thead>
+          <thead><tr><th>Minggu</th><th>Gabah (Kg)</th><th>Nilai Beli</th><th>Produksi (Kg)</th><th>Rincian Penjualan</th><th>Nilai Jual</th><th>Laba/Rugi</th></tr></thead>
           <tbody>${weeklyRows}</tbody>
         </table>
       </div>
@@ -5944,7 +5943,7 @@ function renderLaporan(target){
       <button class="btn btn-secondary" style="width:auto;" onclick="exportTableToExcel('printRekapBulanan','rekap_bulanan','Bulanan')">📊 Excel</button>
       <div class="table-wrap" style="margin-top:14px;" id="printRekapBulanan">
         <table>
-          <thead><tr><th>Bulan</th><th>Qty Gabah Dibeli</th><th>Total Pembelian</th><th>Beras Diproduksi</th><th>Rincian Penjualan per Produk</th><th>Nilai Penjualan</th><th>Laba/Rugi</th></tr></thead>
+          <thead><tr><th>Bulan</th><th>Gabah (Kg)</th><th>Nilai Beli</th><th>Produksi (Kg)</th><th>Rincian Penjualan</th><th>Nilai Jual</th><th>Laba/Rugi</th></tr></thead>
           <tbody>${monthlyRows}</tbody>
         </table>
       </div>
@@ -5957,7 +5956,7 @@ function renderLaporan(target){
       <button class="btn btn-secondary" style="width:auto;" onclick="exportTableToExcel('printRekapTahunan','rekap_tahunan','Tahunan')">📊 Excel</button>
       <div class="table-wrap" style="margin-top:14px;" id="printRekapTahunan">
         <table>
-          <thead><tr><th>Tahun</th><th>Qty Gabah Dibeli</th><th>Total Pembelian</th><th>Beras Diproduksi</th><th>Rincian Penjualan per Produk</th><th>Nilai Penjualan</th><th>Laba/Rugi</th></tr></thead>
+          <thead><tr><th>Tahun</th><th>Gabah (Kg)</th><th>Nilai Beli</th><th>Produksi (Kg)</th><th>Rincian Penjualan</th><th>Nilai Jual</th><th>Laba/Rugi</th></tr></thead>
           <tbody>${yearlyRows}</tbody>
         </table>
       </div>
