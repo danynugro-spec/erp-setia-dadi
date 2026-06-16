@@ -18,6 +18,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root{
@@ -407,12 +408,12 @@
   .dl-btn{ display:flex; align-items:center; gap:6px; }
   .dl-btn .dl-caret{ font-size:0.7rem; opacity:0.7; }
   .dl-menu{
-    display:none; position:absolute; top:calc(100% + 4px); left:0;
+    display:none; position:fixed;
     background:var(--white); border:1px solid var(--line);
     border-radius:10px; box-shadow:0 6px 20px rgba(15,23,42,0.14);
-    min-width:150px; z-index:400; padding:4px;
+    min-width:150px; z-index:600; padding:4px;
   }
-  .dl-wrap:hover .dl-menu, .dl-wrap.open .dl-menu{ display:block; }
+  .dl-menu.open{ display:block; }
   .dl-menu button{
     display:flex; align-items:center; gap:8px;
     width:100%; text-align:left; background:none; border:none;

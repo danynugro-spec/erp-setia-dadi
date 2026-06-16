@@ -1768,74 +1768,104 @@ function printDoc(){
 
 /* ============================================================
    UNDUH DROPDOWN — PDF & JPEG
+   Smart positioning: muncul ke atas jika tombol dekat bawah layar
    ============================================================ */
-// Render tombol "⬇ Unduh ▾" dengan dropdown PDF/JPEG
-// pdfCall & jpegCall adalah string ekspresi JS yang dipanggil onclick
+// Satu shared dropdown element
+function _getDlMenu(){
+  let m = document.getElementById('_globalDlMenu');
+  if(!m){
+    m = document.createElement('div');
+    m.id = '_globalDlMenu';
+    m.className = 'dl-menu';
+    document.body.appendChild(m);
+  }
+  return m;
+}
+
+function _openDlMenu(btnEl, pdfCall, jpegCall){
+  const menu = _getDlMenu();
+  menu.innerHTML = `
+    <button onclick="closeAllDlMenus();${pdfCall}">📄 PDF</button>
+    <button onclick="closeAllDlMenus();${jpegCall}">🖼 JPEG</button>
+  `;
+  // Position: check if near bottom → open upward
+  const rect = btnEl.getBoundingClientRect();
+  const menuH = 96; // approx height of 2-item menu
+  const spaceBelow = window.innerHeight - rect.bottom;
+  const left = Math.min(rect.left, window.innerWidth - 160);
+  let top;
+  if(spaceBelow < menuH + 8){
+    top = rect.top - menuH - 4; // open upward
+  } else {
+    top = rect.bottom + 4; // open downward
+  }
+  menu.style.left = Math.max(8, left) + 'px';
+  menu.style.top  = Math.max(8, top) + 'px';
+  menu.classList.add('open');
+}
+
+function closeAllDlMenus(){
+  const m = document.getElementById('_globalDlMenu');
+  if(m) m.classList.remove('open');
+}
+
+// Render tombol "⬇ Unduh ▾"
 function dlMenu(pdfCall, jpegCall){
-  const id = 'dl_'+Math.random().toString(36).slice(2,7);
-  return `
-    <div class="dl-wrap" id="${id}">
-      <button class="btn btn-secondary dl-btn" style="width:auto;" onclick="document.getElementById('${id}').classList.toggle('open');event.stopPropagation()">
-        ⬇ Unduh <span class="dl-caret">▾</span>
-      </button>
-      <div class="dl-menu">
-        <button onclick="document.getElementById('${id}').classList.remove('open');${pdfCall}">📄 PDF</button>
-        <button onclick="document.getElementById('${id}').classList.remove('open');${jpegCall}">🖼 JPEG</button>
-      </div>
-    </div>`;
+  // Encode calls to pass through onclick attribute safely
+  const safeP = pdfCall.replace(/"/g,"'");
+  const safeJ = jpegCall.replace(/"/g,"'");
+  return `<button class="btn btn-secondary dl-btn" style="width:auto;" onclick="event.stopPropagation();_openDlMenu(this,'${safeP}','${safeJ}')">⬇ Unduh <span class="dl-caret">▾</span></button>`;
 }
 
 // Download content as JPEG via html2canvas
 function downloadJpegFromEl(elId, filename){
   const el = document.getElementById(elId);
   if(!el){ showToast('Konten tidak ditemukan.'); return; }
-  if(typeof html2pdf === 'undefined'){ showToast('Membutuhkan koneksi internet untuk fitur ini.'); return; }
-  // html2pdf bundles html2canvas — access it
-  const h2c = (typeof html2canvas !== 'undefined') ? html2canvas : null;
-  if(!h2c){ showToast('Library JPEG belum dimuat, coba lagi.'); return; }
+  if(typeof html2canvas === 'undefined'){ showToast('Library JPEG belum dimuat. Pastikan ada koneksi internet saat buka aplikasi.'); return; }
   showToast('Membuat JPEG...');
-  h2c(el, {
-    scale: 2, useCORS: true, backgroundColor: '#FFFDF8',
-    windowWidth: 900, scrollY: 0, logging: false
+  html2canvas(el, {
+    scale: 2, useCORS: true, allowTaint: true,
+    backgroundColor: '#FFFDF8',
+    windowWidth: Math.max(el.scrollWidth + 64, 800),
+    scrollX: 0, scrollY: -window.scrollY, logging: false
   }).then(canvas=>{
     const link = document.createElement('a');
-    link.download = filename + '_' + todayStr() + '.jpg';
+    link.download = (filename||'dokumen').replace(/['"]/g,'') + '_' + todayStr() + '.jpg';
     link.href = canvas.toDataURL('image/jpeg', 0.95);
     link.click();
     showToast('JPEG berhasil diunduh.');
-  }).catch(()=>showToast('Gagal membuat JPEG.'));
+  }).catch(e=>{ console.error(e); showToast('Gagal membuat JPEG.'); });
 }
 
-// For report content — build full HTML first, render in hidden div
+// JPEG untuk laporan — bangun HTML dulu di div tersembunyi, lalu screenshot
 function downloadJpegReport(sourceElId, reportTitle, subtitle){
+  if(typeof html2canvas === 'undefined'){ showToast('Library JPEG belum dimuat. Pastikan ada koneksi internet saat buka aplikasi.'); return; }
   const html = buildReportHtml(sourceElId, reportTitle, subtitle);
   if(!html){ showToast('Konten tidak ditemukan.'); return; }
-  if(typeof html2pdf === 'undefined'){ showToast('Membutuhkan koneksi internet untuk fitur ini.'); return; }
-  const h2c = (typeof html2canvas !== 'undefined') ? html2canvas : null;
-  if(!h2c){ showToast('Library JPEG belum dimuat, coba lagi.'); return; }
-  // Render into a temp off-screen div
   const tmp = document.createElement('div');
-  tmp.style.cssText = 'position:fixed;left:-9999px;top:0;width:960px;background:#fff;padding:32px;font-family:Inter,sans-serif;';
+  tmp.style.cssText = 'position:fixed;left:-9999px;top:0;width:900px;background:#fff;padding:28px;font-family:Inter,sans-serif;font-size:13px;';
   tmp.innerHTML = `<style>${REPORT_STYLES}</style>${html}`;
   document.body.appendChild(tmp);
   showToast('Membuat JPEG...');
-  h2c(tmp, {
-    scale: 2, useCORS: true, backgroundColor: '#FFFDF8',
-    windowWidth: 960, scrollY: 0, logging: false
-  }).then(canvas=>{
-    document.body.removeChild(tmp);
-    const link = document.createElement('a');
-    link.download = reportTitle.toLowerCase().replace(/[^a-z0-9]+/g,'_') + '_' + todayStr() + '.jpg';
-    link.href = canvas.toDataURL('image/jpeg', 0.95);
-    link.click();
-    showToast('JPEG berhasil diunduh.');
-  }).catch(()=>{ document.body.removeChild(tmp); showToast('Gagal membuat JPEG.'); });
+  // Wait for fonts/images to render
+  setTimeout(()=>{
+    html2canvas(tmp, {
+      scale: 2, useCORS: true, allowTaint: true,
+      backgroundColor: '#fff', windowWidth: 900,
+      scrollX: 0, scrollY: 0, logging: false
+    }).then(canvas=>{
+      document.body.removeChild(tmp);
+      const link = document.createElement('a');
+      link.download = reportTitle.toLowerCase().replace(/[^a-z0-9]+/g,'_') + '_' + todayStr() + '.jpg';
+      link.href = canvas.toDataURL('image/jpeg', 0.95);
+      link.click();
+      showToast('JPEG berhasil diunduh.');
+    }).catch(e=>{ document.body.removeChild(tmp); console.error(e); showToast('Gagal membuat JPEG.'); });
+  }, 300);
 }
 
 // Close dropdown when clicking outside
-document.addEventListener('click', ()=>{
-  document.querySelectorAll('.dl-wrap.open').forEach(el=>el.classList.remove('open'));
-});
+document.addEventListener('click', ()=>{ closeAllDlMenus(); });
 
 function downloadDocPdf(filenamePrefix){
   const source = document.getElementById('docToPrint');
@@ -1913,27 +1943,41 @@ function exportTableToExcel(sourceElId, filenamePrefix, sheetName){
    company name, report title, and print date.
    ============================================================ */
 const REPORT_STYLES = `
-  body{font-family:'Inter','Segoe UI',sans-serif; padding:32px; color:#1F2430;}
-  .letterhead{display:flex; justify-content:space-between; align-items:flex-start; border-bottom:2px solid #E5E7EB; padding-bottom:14px; margin-bottom:6px;}
-  .letterhead .company{display:flex; align-items:center; gap:14px;}
-  .letterhead .mark{width:48px; height:48px; border:1px solid #E5E7EB; border-radius:10px; overflow:hidden; display:flex; align-items:center; justify-content:center; flex-shrink:0;}
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{font-family:'Inter','Segoe UI',sans-serif; padding:28px; color:#1F2430; background:#fff; font-size:13px; line-height:1.5;}
+  .letterhead{display:flex; justify-content:space-between; align-items:flex-start; border-bottom:2px solid #E5E7EB; padding-bottom:12px; margin-bottom:8px;}
+  .letterhead .company{display:flex; align-items:center; gap:12px;}
+  .letterhead .mark{width:44px; height:44px; border:1px solid #E5E7EB; border-radius:8px; overflow:hidden; display:flex; align-items:center; justify-content:center; flex-shrink:0;}
   .letterhead .mark img{width:100%; height:100%; object-fit:cover;}
-  .letterhead h1{font-size:1.2rem; color:#1F2430; margin:0; font-weight:800;}
-  .letterhead .tagline{font-size:0.75rem; color:#6B7280; margin-top:2px;}
-  .letterhead .meta{text-align:right; font-size:0.78rem; color:#6B7280; font-family:'JetBrains Mono','Courier New',monospace;}
-  h2.report-title{font-size:1.05rem; color:#1F2430; margin:18px 0 4px; font-weight:700;}
-  .report-sub{font-size:0.8rem; color:#6B7280; margin-bottom:16px;}
-  table{width:100%; border-collapse:collapse; font-size:0.85rem; margin-bottom:8px; table-layout:fixed; word-wrap:break-word;}
-  thead th{background:#EEF1F4; color:#6B7280; text-align:left; padding:7px 8px; font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; word-wrap:break-word;}
-  tbody td{padding:6px 8px; border-bottom:1px solid #E5E7EB; word-wrap:break-word; overflow-wrap:break-word;}
-  .num-cell{text-align:right; font-family:'JetBrains Mono','Courier New',monospace; white-space:nowrap;}
-  tr.total-row td{font-weight:700; background:#FEF3C7; border-bottom:none;}
-  .badge{display:inline-block; padding:3px 9px; border-radius:6px; font-size:0.7rem; font-weight:700;}
+  .letterhead h1{font-size:1.1rem; color:#1F2430; font-weight:800;}
+  .letterhead .tagline{font-size:0.72rem; color:#6B7280; margin-top:2px;}
+  .letterhead .meta{text-align:right; font-size:0.72rem; color:#6B7280; font-family:monospace;}
+  h2.report-title{font-size:1rem; color:#1F2430; margin:14px 0 4px; font-weight:700;}
+  .report-sub{font-size:0.78rem; color:#6B7280; margin-bottom:12px;}
+  .table-wrap{overflow:visible !important; width:100%;}
+  table{width:100%; border-collapse:collapse; font-size:0.8rem; margin-bottom:10px; table-layout:auto;}
+  thead{display:table-header-group;}
+  thead th{background:#EEF1F4; color:#4B5563; text-align:left; padding:6px 8px; font-size:0.68rem; font-weight:700; text-transform:uppercase; letter-spacing:0.03em; border-bottom:1px solid #D1D5DB; white-space:nowrap;}
+  tbody td{padding:5px 8px; border-bottom:1px solid #E5E7EB; vertical-align:top; word-break:break-word;}
+  .num-cell, td.num-cell{text-align:right !important; font-family:monospace; white-space:nowrap; font-size:0.78rem;}
+  .mono{font-family:monospace; font-size:0.78rem;}
+  tr.total-row td{font-weight:700; background:#FEF3C7; border-top:2px solid #D97706; border-bottom:none;}
+  .badge{display:inline-block; padding:2px 7px; border-radius:5px; font-size:0.68rem; font-weight:700;}
   .badge.lunas{background:#DCFCE7; color:#15803D;}
   .badge.belum{background:#FEE2E2; color:#B91C1C;}
-  .print-foot{margin-top:32px; font-size:0.76rem; color:#6B7280; display:flex; justify-content:space-between; border-top:1px solid #E5E7EB; padding-top:10px;}
-  .empty-state, .form-row, .form-actions, .help-text, button{display:none !important;}
-  @media print { body{padding:12mm;} }
+  .kpi, .kpi-grid, .grid, .form-row, .form-actions, .help-text, button, .btn, .action-sheet,
+  .m-cards, .tag, .section-divider, .dual-scroll-top, .empty-state .stamp{display:none !important;}
+  .empty-state{font-size:0.8rem; color:#9CA3AF; padding:12px 0;}
+  .print-foot{margin-top:24px; font-size:0.72rem; color:#9CA3AF; display:flex; justify-content:space-between; border-top:1px solid #E5E7EB; padding-top:8px;}
+  @media print{
+    body{padding:0;}
+    @page{size:A4 portrait; margin:12mm 10mm 12mm 10mm;}
+    table{font-size:0.72rem;}
+    thead th{font-size:0.62rem; padding:4px 6px;}
+    tbody td{padding:3px 6px;}
+    tr{page-break-inside:avoid;}
+    .print-foot{position:fixed; bottom:0; left:0; right:0; padding:4px 10mm;}
+  }
 `;
 
 function buildReportHtml(sourceElId, reportTitle, subtitle){
@@ -1943,30 +1987,35 @@ function buildReportHtml(sourceElId, reportTitle, subtitle){
   const printedAt = now.toLocaleDateString('id-ID', {day:'2-digit', month:'long', year:'numeric'}) +
                      ' ' + now.toLocaleTimeString('id-ID', {hour:'2-digit', minute:'2-digit'});
 
-  // Snapshot any live <canvas> elements (e.g. Chart.js charts) as images, since their
-  // pixel content isn't part of innerHTML and would otherwise appear blank when printed
-  // or exported to PDF.
   const clone = source.cloneNode(true);
+
+  // Snapshot Chart.js canvases as images
   const liveCanvases = source.querySelectorAll('canvas');
   const clonedCanvases = clone.querySelectorAll('canvas');
   liveCanvases.forEach((liveCanvas, i)=>{
     const clonedCanvas = clonedCanvases[i];
     if(!clonedCanvas) return;
     try{
-      const dataUrl = liveCanvas.toDataURL('image/png');
       const img = document.createElement('img');
-      img.src = dataUrl;
-      img.style.maxWidth = '100%';
+      img.src = liveCanvas.toDataURL('image/png');
+      img.style.cssText = 'max-width:100%; height:auto;';
       clonedCanvas.replaceWith(img);
-    }catch(e){
-      // toDataURL can fail (e.g. tainted canvas); leave canvas as-is
-    }
+    }catch(e){}
   });
+
+  // Strip interactive elements that shouldn't appear in print
+  clone.querySelectorAll('button, .btn, .form-actions, .action-sheet, .dl-wrap, .dual-scroll-top, .dual-scroll-bar, .m-cards').forEach(el=>el.remove());
+
+  // Remove table-wrap overflow so table shows fully
+  clone.querySelectorAll('.table-wrap').forEach(el=>{ el.style.overflow = 'visible'; });
+
+  // Fix num-cell alignment explicitly (inline style in case CSS not loaded)
+  clone.querySelectorAll('.num-cell').forEach(el=>{ el.style.textAlign = 'right'; });
 
   return `
     <div class="letterhead">
       <div class="company">
-        <div class="mark"><img src="${LOGO_DATA_URI}" alt="Logo CV. Setia Dadi" style="width:100%;height:100%;object-fit:cover;"></div>
+        <div class="mark"><img src="${LOGO_DATA_URI}" alt="Logo"></div>
         <div>
           <h1>CV. Setia Dadi</h1>
           <div class="tagline">Penggilingan Padi &mdash; Sistem Manajemen ERP</div>
@@ -1975,11 +2024,11 @@ function buildReportHtml(sourceElId, reportTitle, subtitle){
       <div class="meta">Dicetak: ${printedAt}</div>
     </div>
     <h2 class="report-title">${esc(reportTitle)}</h2>
-    ${subtitle ? `<div class="report-sub">${esc(subtitle)}</div>` : ''}
+    ${subtitle ? `<div class="report-sub">${subtitle}</div>` : ''}
     ${clone.innerHTML}
     <div class="print-foot">
       <div>CV. Setia Dadi &mdash; Dokumen ini dihasilkan otomatis oleh sistem ERP.</div>
-      <div>Halaman 1</div>
+      <div>Dicetak: ${printedAt}</div>
     </div>
   `;
 }
