@@ -756,6 +756,9 @@ function showRiwayatSupplier(supplierNama){
   const judul       = 'Riwayat Transaksi: '+supplierNama;
   const subtitel    = 'Per '+fmtDate(todayStr())+' | Total pembelian: '+fmtRp(totalDebit)+' | Dibayar: '+fmtRp(totalKredit)+' | Saldo: '+fmtRp(sisaFinal);
 
+  // Simpan ke global agar tombol unduh bisa akses tanpa eval/string encoding
+  window._riwayatCtx = { printId, judul, subtitel };
+
   openModal(`
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
       <div>
@@ -770,9 +773,9 @@ function showRiwayatSupplier(supplierNama){
       </div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
-      <button class="btn btn-primary" style="width:auto;" onclick="printReport('${printId}','${judul}','${subtitel}')">🖨 Cetak</button>
-      ${dlMenuReport('${printId}','${judul}','${subtitel}')}
-      <button class="btn btn-secondary" style="width:auto;" onclick="exportTableToExcel('${printId}','riwayat_supplier','Riwayat')">📊 Excel</button>
+      <button class="btn btn-primary" style="width:auto;" onclick="printReport(window._riwayatCtx.printId,window._riwayatCtx.judul,window._riwayatCtx.subtitel)">🖨 Cetak</button>
+      <button class="btn btn-secondary dl-btn" style="width:auto;" onclick="event.stopPropagation();_openDlMenuCtx(this,'_riwayatCtx')">⬇ Unduh <span class="dl-caret">▾</span></button>
+      <button class="btn btn-secondary" style="width:auto;" onclick="exportTableToExcel(window._riwayatCtx.printId,'riwayat_supplier','Riwayat')">📊 Excel</button>
       <button class="btn btn-secondary" onclick="closeModal()">Tutup</button>
     </div>
     <div id="${printId}">
@@ -854,6 +857,8 @@ function showRiwayatPelanggan(pelangganNama){
   const judul       = 'Riwayat Transaksi: '+pelangganNama;
   const subtitel    = 'Per '+fmtDate(todayStr())+' | Total penjualan: '+fmtRp(totalDebit)+' | Dibayar: '+fmtRp(totalKredit)+' | Saldo: '+fmtRp(sisaFinal);
 
+  window._riwayatCtx = { printId, judul, subtitel };
+
   openModal(`
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
       <div>
@@ -868,9 +873,9 @@ function showRiwayatPelanggan(pelangganNama){
       </div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
-      <button class="btn btn-primary" style="width:auto;" onclick="printReport('${printId}','${judul}','${subtitel}')">🖨 Cetak</button>
-      ${dlMenuReport('${printId}','${judul}','${subtitel}')}
-      <button class="btn btn-secondary" style="width:auto;" onclick="exportTableToExcel('${printId}','riwayat_pelanggan','Riwayat')">📊 Excel</button>
+      <button class="btn btn-primary" style="width:auto;" onclick="printReport(window._riwayatCtx.printId,window._riwayatCtx.judul,window._riwayatCtx.subtitel)">🖨 Cetak</button>
+      <button class="btn btn-secondary dl-btn" style="width:auto;" onclick="event.stopPropagation();_openDlMenuCtx(this,'_riwayatCtx')">⬇ Unduh <span class="dl-caret">▾</span></button>
+      <button class="btn btn-secondary" style="width:auto;" onclick="exportTableToExcel(window._riwayatCtx.printId,window._riwayatCtx.judul,'Riwayat')">📊 Excel</button>
       <button class="btn btn-secondary" onclick="closeModal()">Tutup</button>
     </div>
     <div id="${printId}">
@@ -1275,9 +1280,69 @@ function deleteUser(idx){
 /* ============================================================
    FORM PEMBELIAN GABAH
    ============================================================ */
+/* ============================================================
+   E-STATEMENT: Filter Tanggal (date range picker)
+   Tersimpan di window._dateFilter per page
+   ============================================================ */
+function buildDateFilter(pageKey, onChangeFn){
+  const f = window._dateFilter = window._dateFilter || {};
+  if(!f[pageKey]) f[pageKey] = {from:'', to:'', preset:''};
+  const cur = f[pageKey];
+  return `
+  <div class="date-filter-bar" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px;padding:10px 14px;background:var(--paper-2);border-radius:10px;">
+    <span style="font-size:0.8rem;font-weight:600;color:var(--ink-soft);">Periode:</span>
+    <button class="btn btn-sm ${cur.preset==='today'?'btn-primary':'btn-secondary'}" onclick="setDatePreset('${pageKey}','today',${onChangeFn})">Hari Ini</button>
+    <button class="btn btn-sm ${cur.preset==='week'?'btn-primary':'btn-secondary'}" onclick="setDatePreset('${pageKey}','week',${onChangeFn})">Minggu Ini</button>
+    <button class="btn btn-sm ${cur.preset==='month'?'btn-primary':'btn-secondary'}" onclick="setDatePreset('${pageKey}','month',${onChangeFn})">Bulan Ini</button>
+    <button class="btn btn-sm ${cur.preset==='year'?'btn-primary':'btn-secondary'}" onclick="setDatePreset('${pageKey}','year',${onChangeFn})">Tahun Ini</button>
+    <button class="btn btn-sm ${cur.preset===''?'btn-primary':'btn-secondary'}" onclick="setDatePreset('${pageKey}','',${onChangeFn})">Semua</button>
+    <span style="font-size:0.8rem;color:var(--ink-soft);margin-left:4px;">atau:</span>
+    <input type="date" value="${cur.from}" style="font-size:0.82rem;padding:4px 8px;border:1px solid var(--line);border-radius:6px;width:130px;"
+      onchange="window._dateFilter['${pageKey}'].from=this.value;window._dateFilter['${pageKey}'].preset='custom';(${onChangeFn})()">
+    <span style="font-size:0.8rem;color:var(--ink-soft);">s/d</span>
+    <input type="date" value="${cur.to}" style="font-size:0.82rem;padding:4px 8px;border:1px solid var(--line);border-radius:6px;width:130px;"
+      onchange="window._dateFilter['${pageKey}'].to=this.value;window._dateFilter['${pageKey}'].preset='custom';(${onChangeFn})()">
+    ${cur.from||cur.to?`<span style="font-size:0.78rem;color:var(--rice-green);font-weight:600;">● Filter aktif</span>`:''}
+  </div>`;
+}
+
+function setDatePreset(pageKey, preset, onChangeFn){
+  const f = window._dateFilter = window._dateFilter || {};
+  if(!f[pageKey]) f[pageKey] = {from:'', to:'', preset:''};
+  const today = todayStr();
+  const d = new Date(today);
+  if(preset==='today'){
+    f[pageKey] = {from:today, to:today, preset:'today'};
+  } else if(preset==='week'){
+    const day = d.getDay()||7; // Mon=1..Sun=7
+    const mon = new Date(d); mon.setDate(d.getDate()-(day-1));
+    const sun = new Date(mon); sun.setDate(mon.getDate()+6);
+    f[pageKey] = {from:mon.toISOString().slice(0,10), to:sun.toISOString().slice(0,10), preset:'week'};
+  } else if(preset==='month'){
+    f[pageKey] = {from:today.slice(0,7)+'-01', to:today, preset:'month'};
+  } else if(preset==='year'){
+    f[pageKey] = {from:today.slice(0,4)+'-01-01', to:today, preset:'year'};
+  } else {
+    f[pageKey] = {from:'', to:'', preset:''};
+  }
+  onChangeFn();
+}
+
+function applyDateFilter(records, pageKey, dateField){
+  const f = (window._dateFilter||{})[pageKey];
+  if(!f || (!f.from && !f.to)) return records;
+  return records.filter(r=>{
+    const d = r[dateField]||'';
+    if(f.from && d < f.from) return false;
+    if(f.to   && d > f.to)   return false;
+    return true;
+  });
+}
+
 function renderPembelian(target){
   target = target || document.getElementById('pageInner');
-  const rows = DB.pembelian.slice().sort((a,b)=> b.tanggal.localeCompare(a.tanggal) || b.id.localeCompare(a.id));
+  const allRows = DB.pembelian.slice().sort((a,b)=> b.tanggal.localeCompare(a.tanggal) || b.id.localeCompare(a.id));
+  const rows = applyDateFilter(allRows, 'pembelian', 'tanggal');
   const canEdit = SESSION.role !== 'KASIR' ? true : true;
   const canDelete = SESSION.role !== 'KASIR';
 
@@ -1367,6 +1432,7 @@ function renderPembelian(target){
   }
 
   target.innerHTML = `
+    ${buildDateFilter('pembelian','renderPembelian')}
     <div class="grid grid-3" style="margin-bottom:${beras.length>0||samping.length>0?'12':'20'}px;">
       <div class="kpi">
         <div class="label">Total Transaksi</div>
@@ -1819,6 +1885,24 @@ function printDoc(){
    Smart positioning: muncul ke atas jika tombol dekat bawah layar
    ============================================================ */
 // Satu shared dropdown element
+// Helper untuk tombol unduh di modal (riwayat supplier/pelanggan)
+// ctx adalah nama window property yang menyimpan {printId, judul, subtitel}
+function _openDlMenuCtx(btnEl, ctxKey){
+  const ctx = window[ctxKey];
+  if(!ctx){ showToast('Konteks tidak ditemukan.'); return; }
+  const menu = _getDlMenu();
+  menu.innerHTML = '<button id="_dlPdf">📄 PDF</button><button id="_dlJpeg">🖼 JPEG</button>';
+  menu.querySelector('#_dlPdf').onclick  = ()=>{ closeAllDlMenus(); downloadReportPdf(ctx.printId, ctx.judul, ctx.subtitel); };
+  menu.querySelector('#_dlJpeg').onclick = ()=>{ closeAllDlMenus(); downloadJpegReport(ctx.printId, ctx.judul, ctx.subtitel); };
+  const rect = btnEl.getBoundingClientRect();
+  const spaceBelow = window.innerHeight - rect.bottom;
+  const left = Math.min(rect.left, window.innerWidth - 160);
+  const top = spaceBelow < 100 ? rect.top - 90 - 4 : rect.bottom + 4;
+  menu.style.left = Math.max(8, left) + 'px';
+  menu.style.top  = Math.max(8, top) + 'px';
+  menu.classList.add('open');
+}
+
 function _getDlMenu(){
   let m = document.getElementById('_globalDlMenu');
   if(!m){
@@ -1883,18 +1967,20 @@ function _loadHtml2Canvas(callback){
   document.head.appendChild(s);
 }
 
-// Download content as JPEG via html2canvas
+// Download element as JPEG — full height, not clipped to viewport
 function downloadJpegFromEl(elId, filename){
   const el = document.getElementById(elId);
   if(!el){ showToast('Konten tidak ditemukan.'); return; }
-  showToast('Memuat library...');
+  showToast('Memuat library JPEG...');
   _loadHtml2Canvas(()=>{
     showToast('Membuat JPEG...');
     html2canvas(el, {
       scale: 2, useCORS: true, allowTaint: true,
       backgroundColor: '#FFFDF8',
-      windowWidth: Math.max(el.scrollWidth + 64, 800),
-      scrollX: 0, scrollY: -window.scrollY, logging: false
+      width: el.scrollWidth, height: el.scrollHeight,
+      windowWidth: Math.max(el.scrollWidth + 40, 800),
+      windowHeight: el.scrollHeight,
+      x: 0, y: 0, scrollX: 0, scrollY: 0, logging: false
     }).then(canvas=>{
       const link = document.createElement('a');
       link.download = (filename||'dokumen').replace(/['"]/g,'') + '_' + todayStr() + '.jpg';
@@ -1905,11 +1991,11 @@ function downloadJpegFromEl(elId, filename){
   });
 }
 
-// JPEG untuk laporan
+// JPEG untuk laporan — render ke div tersembunyi dengan full height
 function downloadJpegReport(sourceElId, reportTitle, subtitle){
   const html = buildReportHtml(sourceElId, reportTitle, subtitle);
   if(!html){ showToast('Konten tidak ditemukan.'); return; }
-  showToast('Memuat library...');
+  showToast('Memuat library JPEG...');
   _loadHtml2Canvas(()=>{
     const tmp = document.createElement('div');
     tmp.style.cssText = 'position:fixed;left:-9999px;top:0;width:900px;background:#fff;padding:28px;font-family:Inter,sans-serif;font-size:13px;line-height:1.5;';
@@ -1917,9 +2003,12 @@ function downloadJpegReport(sourceElId, reportTitle, subtitle){
     document.body.appendChild(tmp);
     showToast('Membuat JPEG...');
     setTimeout(()=>{
+      const fullH = tmp.scrollHeight;
       html2canvas(tmp, {
         scale: 2, useCORS: true, allowTaint: true,
-        backgroundColor: '#fff', windowWidth: 900,
+        backgroundColor: '#fff',
+        width: 900, height: fullH,
+        windowWidth: 900, windowHeight: fullH,
         scrollX: 0, scrollY: 0, logging: false
       }).then(canvas=>{
         document.body.removeChild(tmp);
@@ -1929,7 +2018,7 @@ function downloadJpegReport(sourceElId, reportTitle, subtitle){
         link.click();
         showToast('JPEG berhasil diunduh.');
       }).catch(e=>{ document.body.removeChild(tmp); console.error(e); showToast('Gagal membuat JPEG.'); });
-    }, 400);
+    }, 500);
   });
 }
 
@@ -2536,7 +2625,7 @@ function renderGudang(target){
       <p class="help-text" style="margin-top:-4px;">Mutasi otomatis tercatat dari Pembelian (gabah masuk), Produksi (gabah keluar → beras masuk), dan Penjualan (beras keluar). Gunakan "+ Mutasi Manual" untuk koreksi stok, susut, atau barang rusak.</p>
       ${canEdit ? `<button class="btn btn-primary" style="width:auto;" onclick="editMutasi(null)">+ Mutasi Manual</button>` : ''}
       <button class="btn btn-secondary" style="width:auto;" onclick="printReport('printGudang','Riwayat Mutasi Stok','Total catatan: ${history.length}')">🖨 Cetak Laporan</button>
-      ${dlMenuReport('printGudang','Riwayat Mutasi Stok','Total catatan: ${history.length}')}
+      ${dlMenuReport('printGudang','Riwayat Mutasi Stok','Total '+history.length+' catatan')}
       <button class="btn btn-secondary" style="width:auto;" onclick="exportTableToExcel('printGudang','riwayat_mutasi_stok')">📊 Unduh Excel</button>
       <div class="table-wrap" style="margin-top:14px;" id="printGudang">
         <table>
@@ -3059,7 +3148,7 @@ function renderBahanPendukung(target){
       <p class="help-text" style="margin-top:-4px;">Pembelian dari supplier (roll karet, karung, benang jahit, dll). Tercatat otomatis sebagai beban di Kas &amp; Bank.</p>
       <button class="btn btn-primary" style="width:auto;" onclick="editPembelianBahan(null)">+ Pembelian Baru</button>
       <button class="btn btn-secondary" style="width:auto;" onclick="printReport('printPembelianBahan','Pembelian Bahan Pendukung','Total: ${DB.pembelianBahan.length} transaksi &mdash; Total biaya: ${fmtRp(totalBeli)}')">🖨 Cetak</button>
-      ${dlMenuReport('printPembelianBahan','Pembelian Bahan Pendukung','Total: ${DB.pembelianBahan.length} transaksi &mdash; Total biaya: ${fmtRp(totalBeli)}')}
+      ${dlMenuReport('printPembelianBahan','Pembelian Bahan Pendukung','Total '+DB.pembelianBahan.length+' transaksi')}
       <button class="btn btn-secondary" style="width:auto;" onclick="exportTableToExcel('printPembelianBahan','pembelian_bahan_pendukung','Bahan Pendukung')">📊 Excel</button>
       <div class="table-wrap" style="margin-top:14px;" id="printPembelianBahan">
         <table>
@@ -3074,7 +3163,7 @@ function renderBahanPendukung(target){
       <p class="help-text" style="margin-top:-4px;">Catat pemakaian bahan pendukung untuk mengurangi stok, opsional dikaitkan dengan batch produksi tertentu untuk tracking biaya per batch.</p>
       <button class="btn btn-primary" style="width:auto;" onclick="editPemakaianBahan(null)">+ Catat Pemakaian</button>
       <button class="btn btn-secondary" style="width:auto;" onclick="printReport('printPemakaianBahan','Pemakaian Bahan Pendukung','Total: ${DB.pemakaianBahan.length} catatan &mdash; Total nilai: ${fmtRp(totalPakai)}')">🖨 Cetak</button>
-      ${dlMenuReport('printPemakaianBahan','Pemakaian Bahan Pendukung','Total: ${DB.pemakaianBahan.length} catatan &mdash; Total nilai: ${fmtRp(totalPakai)}')}
+      ${dlMenuReport('printPemakaianBahan','Pemakaian Bahan Pendukung','Total '+DB.pemakaianBahan.length+' catatan')}
       <button class="btn btn-secondary" style="width:auto;" onclick="exportTableToExcel('printPemakaianBahan','pemakaian_bahan_pendukung','Pemakaian')">📊 Excel</button>
       <div class="table-wrap" style="margin-top:14px;" id="printPemakaianBahan">
         <table>
@@ -3758,7 +3847,8 @@ function removeKasBankEntry(sumberType, sourceId){
    ============================================================ */
 function renderPenjualan(target){
   target = target || document.getElementById('pageInner');
-  const rows = DB.penjualan.slice().sort((a,b)=> b.tanggal.localeCompare(a.tanggal) || b.id.localeCompare(a.id));
+  const allRows = DB.penjualan.slice().sort((a,b)=> b.tanggal.localeCompare(a.tanggal) || b.id.localeCompare(a.id));
+  const rows = applyDateFilter(allRows, 'penjualan', 'tanggal');
 
   // Pisah per kategori
   const jualBeras   = DB.penjualan.filter(r=>r.kategori==='Beras'||(!r.kategori&&r.produk!=='Gabah'));
@@ -3842,6 +3932,7 @@ function renderPenjualan(target){
       }).join('');
 
   target.innerHTML = `
+    ${buildDateFilter('penjualan','renderPenjualan')}
     <div class="grid grid-4" style="margin-bottom:${jualSamping.length>0||jualGabah.length>0?'12':'20'}px;">
       <div class="kpi">
         <div class="label">Total Transaksi</div>
@@ -4328,8 +4419,9 @@ function renderKasBank(target){
         <button class="btn btn-primary" style="width:auto;" onclick="editKasManual(null)">+ Catatan Manual</button>
         <button class="btn btn-secondary" style="width:auto;" onclick="editSaldoAwal()">Ubah Saldo Awal</button>
         <button class="btn btn-secondary" style="width:auto;" onclick="printReport('printKasBank','Buku Kas &amp; Bank','Saldo awal: ${fmtRp(DB.saldoAwalKas)} &mdash; Saldo akhir: ${fmtRp(saldoAkhir)}')">🖨 Cetak Laporan</button>
-        ${dlMenuReport('printKasBank','Buku Kas &amp; Bank','Saldo awal: ${fmtRp(DB.saldoAwalKas)} &mdash; Saldo akhir: ${fmtRp(saldoAkhir)}')}
+        ${dlMenuReport('printKasBank','Buku Kas & Bank','Saldo akhir: '+fmtRp(saldoAkhir))}
       </div>
+      ${buildDateFilter('kasbank','renderKasBank')}
       <div class="table-wrap" style="margin-top:10px;" id="printKasBank">
         <table>
           <thead><tr><th>Tanggal</th><th>Keterangan / Kategori</th><th>Kas Masuk</th><th>Kas Keluar</th><th>Saldo</th></tr></thead>
@@ -4464,10 +4556,15 @@ function prosesKasHutangSupplier(fakturHutang, totalBayar, totalSisa, tanggal, k
     const hutangFaktur = getHutangPembelian(r);
     const bayarFakturIni = Math.min(hutangFaktur, sisaBayar);
     sisaBayar -= bayarFakturIni;
-    rincianBayar.push({noFaktur:r.noFaktur, tanggalFaktur:r.tanggal, jenisGabah:r.jenisGabah, qty:r.qty, harga:r.harga, totalFaktur:r.total, sisaSebelum:hutangFaktur, bayar:bayarFakturIni});
+    rincianBayar.push({
+      noFaktur:r.noFaktur, tanggalFaktur:r.tanggal,
+      kategori:r.kategori||'Gabah', jenisGabah:r.jenisGabah,
+      qty:r.qty, harga:r.harga, angkut:r.angkut||0,
+      totalFaktur:r.total, sisaSebelum:hutangFaktur, bayar:bayarFakturIni
+    });
     DB.kasbank.push({
       id: uid(), sumber:'manual', tanggal, kategori:'Pelunasan Hutang Supplier',
-      keterangan:`${keterangan} [${r.noFaktur}]`,
+      keterangan:`Pelunasan hutang ${r.jenisGabah||''} ${esc(supplier)} — ${r.noFaktur} (${fmtNum(r.qty)}kg @${fmtRp(r.harga)})`,
       masuk:0, keluar:bayarFakturIni, refId:r.id
     });
   });
@@ -4507,7 +4604,7 @@ function showKuitansiPembayaran(supplier, tanggal, keterangan, totalBayar, total
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
       <button class="btn btn-primary" style="width:auto;" onclick="printDoc()">🖨 Cetak Kuitansi</button>
-      ${dlMenuDoc('kuitansi_${noKuitansi}','docToPrint')}
+      ${dlMenuDoc('kuitansi_'+noKuitansi,'docToPrint')}
       <button class="btn btn-secondary" onclick="closeModal()">Tutup</button>
     </div>
     ${buildKuitansiDocHtml(kuitansiRecord)}
@@ -4522,17 +4619,23 @@ function buildKuitansiDocHtml(k){
   const lunas = sisaSetelah <= 0.01;
   const kelebihan = k.kelebihan||0;
 
-  const rincianRows = (k.rincian||[]).map(r=>`
+  const rincianRows = (k.rincian||[]).map(r=>{
+    const kat = r.kategori||'Gabah';
+    const labelBarang = kat==='Beras' ? (r.jenisGabah==='Premium'?'Beras Premium':r.jenisGabah==='Medium'?'Beras Medium':r.jenisGabah||'-') :
+                        kat==='Produk Samping' ? r.jenisGabah||'-' :
+                        'Gabah '+esc(r.jenisGabah||'');
+    const hargaDetail = r.harga ? fmtRp(r.harga)+'/kg'+(r.angkut>0?' + angkut '+fmtRp(r.angkut):'') : '';
+    return `
     <tr>
       <td class="mono">${esc(r.noFaktur)}</td>
       <td>${fmtDate(r.tanggalFaktur)}</td>
-      <td>${esc(r.jenisGabah||'')} (${fmtNum(r.qty)} kg)</td>
+      <td>${esc(labelBarang)}<br><span style="font-size:0.72rem;color:var(--ink-soft);">${fmtNum(r.qty)} kg · ${hargaDetail}</span></td>
       <td class="num-cell">${fmtRp(r.totalFaktur)}</td>
       <td class="num-cell">${fmtRp(r.sisaSebelum)}</td>
       <td class="num-cell"><b>${fmtRp(r.bayar)}</b></td>
-      <td class="num-cell">${fmtRp(Math.max(0,r.sisaSebelum-r.bayar))||'—'}</td>
+      <td class="num-cell" style="${r.sisaSebelum-r.bayar<=0?'color:var(--rice-green);font-weight:700;':'color:var(--red);'}">${r.sisaSebelum-r.bayar<=0?'Lunas ✓':fmtRp(r.sisaSebelum-r.bayar)}</td>
     </tr>
-  `).join('');
+  `;}).join('');
 
   function terbilang(n){
     const s=['','satu','dua','tiga','empat','lima','enam','tujuh','delapan','sembilan',
@@ -4556,21 +4659,24 @@ function buildKuitansiDocHtml(k){
         <div class="company" style="display:flex;align-items:center;gap:14px;">
           <div class="seal"><img src="${LOGO_DATA_URI}" alt="Logo"></div>
           <div>
-            <h2 style="font-size:1.2rem;">KUITANSI PEMBAYARAN</h2>
-            <div class="doc-no">No: ${esc(k.noKuitansi)}</div>
+            <h2 style="font-size:1.2rem;">KUITANSI PEMBAYARAN HUTANG</h2>
+            <div class="doc-no">No. Kuitansi: <b>${esc(k.noKuitansi)}</b></div>
             <div class="doc-no">Tanggal: ${fmtDate(k.tanggal)}</div>
           </div>
+        </div>
+        <div style="text-align:right;font-size:0.8rem;color:var(--ink-soft);">
+          <div><b>CV. Setia Dadi</b></div>
+          <div>Penggilingan Padi</div>
         </div>
       </div>
       <div style="background:var(--paper-2);border-radius:10px;padding:16px 18px;margin:16px 0;">
         <table style="width:100%;border:none;">
-          <tr><td style="padding:3px 0;width:140px;color:var(--ink-soft);font-size:0.85rem;">Telah diterima dari</td><td style="padding:3px 0;font-size:0.85rem;">: <b>CV. Setia Dadi</b></td></tr>
-          <tr><td style="padding:3px 0;color:var(--ink-soft);font-size:0.85rem;">Dibayarkan kepada</td><td style="padding:3px 0;font-size:0.85rem;">: <b>${esc(k.supplier)}</b>${supplierData&&supplierData.alamat?' · '+esc(supplierData.alamat):''}</td></tr>
-          <tr><td style="padding:3px 0;color:var(--ink-soft);font-size:0.85rem;">Keperluan</td><td style="padding:3px 0;font-size:0.85rem;">: ${esc(k.keterangan)}</td></tr>
-          <tr><td style="padding:3px 0;color:var(--ink-soft);font-size:0.85rem;">Jumlah</td>
+          <tr><td style="padding:3px 0;width:150px;color:var(--ink-soft);font-size:0.85rem;">Telah dibayarkan kepada</td><td style="padding:3px 0;font-size:0.85rem;">: <b>${esc(k.supplier)}</b>${supplierData&&supplierData.alamat?'<br><span style="margin-left:2px;font-size:0.78rem;color:var(--ink-soft);">'+esc(supplierData.alamat)+'</span>':''}</td></tr>
+          <tr><td style="padding:3px 0;color:var(--ink-soft);font-size:0.85rem;">Untuk keperluan</td><td style="padding:3px 0;font-size:0.85rem;">: ${esc(k.keterangan)}</td></tr>
+          <tr><td style="padding:3px 0;color:var(--ink-soft);font-size:0.85rem;">Jumlah pembayaran</td>
               <td style="padding:3px 0;">: <span style="font-size:1.3rem;font-weight:800;font-family:'JetBrains Mono',monospace;color:var(--ink);">${fmtRp(k.totalBayar)}</span></td></tr>
           <tr><td style="padding:3px 0;color:var(--ink-soft);font-size:0.85rem;">Terbilang</td>
-              <td style="padding:3px 0;font-size:0.85rem;font-style:italic;">: #${terbilangCapitalized}#</td></tr>
+              <td style="padding:3px 0;font-size:0.85rem;font-style:italic;">: <u>${terbilangCapitalized}</u></td></tr>
         </table>
       </div>
       <h4 style="margin-bottom:8px;font-size:0.88rem;color:var(--ink-soft);">Rincian Faktur yang Dilunasi:</h4>
@@ -4664,7 +4770,7 @@ function bukaKuitansi(id){
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
       <button class="btn btn-primary" style="width:auto;" onclick="printDoc()">🖨 Cetak</button>
-      ${dlMenuDoc('kuitansi_${k.noKuitansi}','docToPrint')}
+      ${dlMenuDoc('kuitansi_'+k.noKuitansi,'docToPrint')}
       <button class="btn btn-danger btn-sm" style="width:auto;" onclick="hapusKuitansi('${k.id}')">🗑 Hapus</button>
       <button class="btn btn-secondary" onclick="closeModal()">Tutup</button>
     </div>
@@ -5613,7 +5719,7 @@ function renderNeraca(target){
       </div>
     </div>
     <button class="btn btn-secondary btn-sm" style="width:auto; margin-bottom:14px;" onclick="printReport('printNeraca','Neraca','Posisi keuangan per tanggal ${esc(fmtDate(todayStr()))}')">🖨 Cetak Laporan</button>
-    ${dlMenuReport('printNeraca','Neraca','Posisi keuangan per tanggal ${esc(fmtDate(todayStr()))}')}
+    ${dlMenuReport('printNeraca','Neraca','Posisi keuangan per '+fmtDate(todayStr()))}
     <div id="printNeraca">
     <div class="grid grid-2">
       <div class="card">
@@ -5984,7 +6090,7 @@ function renderLaporan(target){
       <h3>Rekap Mingguan <span class="tag">${weekly.length} minggu</span></h3>
       <p class="help-text" style="margin-top:-4px;">Ringkasan aktivitas usaha per minggu (Senin&ndash;Minggu): pembelian gabah, hasil produksi, penjualan, dan laba/rugi.</p>
       <button class="btn btn-secondary" style="width:auto;" onclick="printReport('printRekapMingguan','Rekap Mingguan','Total ${weekly.length} minggu tercatat')">🖨 Cetak</button>
-      ${dlMenuReport('printRekapMingguan','Rekap Mingguan','Total ${weekly.length} minggu tercatat')}
+      ${dlMenuReport('printRekapMingguan','Rekap Mingguan','Total '+weekly.length+' minggu')}
       <button class="btn btn-secondary" style="width:auto;" onclick="exportTableToExcel('printRekapMingguan','rekap_mingguan','Mingguan')">📊 Excel</button>
       <div class="table-wrap" style="margin-top:14px;" id="printRekapMingguan">
         <table>
@@ -5998,7 +6104,7 @@ function renderLaporan(target){
       <h3>Rekap Bulanan <span class="tag">${monthly.length} bulan</span></h3>
       <p class="help-text" style="margin-top:-4px;">Ringkasan seluruh aktivitas usaha per bulan: pembelian gabah, hasil produksi, penjualan, dan laba/rugi.</p>
       <button class="btn btn-secondary" style="width:auto;" onclick="printReport('printRekapBulanan','Rekap Bulanan','Total ${monthly.length} bulan tercatat')">🖨 Cetak</button>
-      ${dlMenuReport('printRekapBulanan','Rekap Bulanan','Total ${monthly.length} bulan tercatat')}
+      ${dlMenuReport('printRekapBulanan','Rekap Bulanan','Total '+monthly.length+' bulan')}
       <button class="btn btn-secondary" style="width:auto;" onclick="exportTableToExcel('printRekapBulanan','rekap_bulanan','Bulanan')">📊 Excel</button>
       <div class="table-wrap" style="margin-top:14px;" id="printRekapBulanan">
         <table>
@@ -6011,7 +6117,7 @@ function renderLaporan(target){
     <div class="card">
       <h3>Rekap Tahunan <span class="tag">${yearly.length} tahun</span></h3>
       <button class="btn btn-secondary" style="width:auto;" onclick="printReport('printRekapTahunan','Rekap Tahunan','Total ${yearly.length} tahun tercatat')">🖨 Cetak</button>
-      ${dlMenuReport('printRekapTahunan','Rekap Tahunan','Total ${yearly.length} tahun tercatat')}
+      ${dlMenuReport('printRekapTahunan','Rekap Tahunan','Total '+yearly.length+' tahun')}
       <button class="btn btn-secondary" style="width:auto;" onclick="exportTableToExcel('printRekapTahunan','rekap_tahunan','Tahunan')">📊 Excel</button>
       <div class="table-wrap" style="margin-top:14px;" id="printRekapTahunan">
         <table>
@@ -6063,7 +6169,7 @@ function renderDashboard(target){
   target.innerHTML = `
     <div class="form-actions" style="margin-bottom:14px;">
       <button class="btn btn-secondary" style="width:auto;" onclick="printReport('printDashboard','Dashboard Ringkasan','Per ${esc(fmtDate(todayStr()))}')">🖨 Cetak Dashboard</button>
-      ${dlMenuReport('printDashboard','Dashboard Ringkasan','Per ${esc(fmtDate(todayStr()))}')}
+      ${dlMenuReport('printDashboard','Dashboard Ringkasan','Per '+fmtDate(todayStr()))}
     </div>
     <div id="printDashboard">
 
